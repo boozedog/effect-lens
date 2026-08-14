@@ -580,6 +580,211 @@ cleared so the evidence does not claim the override at the wrong commit.
   Importing effect-solutions material (which must be labeled distinctly) is out
   of scope.
 
+## Core operations — src/operations/
+
+The adapter-independent read-only operations that CLI, pi, and future MCP
+adapters consume. They centralize policy and analysis logic so no surface
+adapter duplicates it. All operations are read-only and produce
+JSON-serializable Schema-backed results. The shared version-applicability
+logic lives in `src/Version.ts` and is used by ingestion, lookup, and design so
+version decisions are computed identically everywhere.
+
+### `VersionStatus` — src/operations/shared.ts
+
+```json
+"current" | "stale" | "unknown"
+```
+
+- `current` — the record's version window includes the active Effect version.
+- `stale` — the record's version window does not include the active version.
+- `unknown` — the record carries no version window, so applicability cannot be
+  confirmed.
+
+`versionStatusOf(guidance, effectVersion)` computes `{ applicable, versionStatus }`
+for a guidance record. A record with no version window is treated as
+inapplicable (`unknown`) so it is never silently used.
+
+### `lookup` — src/operations/lookup.ts
+
+Searches ingested guidance and returns compact, evidence-backed matches with
+provenance and version applicability.
+
+#### `LookupQuery`
+
+```json
+{
+  "query": "piping",
+  "effectVersion": "4.0.0",
+  "limit": 10,
+  "source": "upstream | null"
+}
+```
+
+`query` is free text matched against guidance topics and summaries;
+`effectVersion` is the project's active Effect version used to decide
+applicability; `limit` (a positive integer) caps the returned matches; `source`
+optionally restricts to a single source kind.
+
+#### `LookupMatch`
+
+```json
+{
+  "guidance": { "id": "g-pipe", "…": "…" },
+  "score": 0.75,
+  "applicable": true,
+  "versionStatus": "current",
+  "reason": "applies to effect 4.0.0 | null"
+}
+```
+
+`score` is a deterministic relevance value (0..1): a query token found in the
+topic scores 2, in the summary scores 1, over the maximum possible weight.
+Matches are ranked by applicability first (applicable before inapplicable),
+then by score descending, then by topic ascending, so current guidance is not
+dropped when stale same-topic hits would otherwise fill the limit.
+
+#### `LookupResult`
+
+```json
+{
+  "query": "piping",
+  "effectVersion": "4.0.0",
+  "matches": [],
+  "diagnostics": []
+}
+```
+
+Diagnostics are emitted for incompatible (`stale`/`unknown`) references and
+for `conflict` guidance, so incompatible versioned references are never
+silently used. A query with no matches emits a `lookup-no-matches` diagnostic.
+
+### `review` — src/operations/review.ts
+
+Maps oxlint diagnostics to stable Lens `Finding` values and summarises them. It
+reuses the existing rule catalog and the `toFinding` seam — it does not
+duplicate rule policy. Diagnostics whose rule id is not in the Lens catalog are
+never coerced into Lens findings; they are surfaced as non-rule `Diagnostic`
+values.
+
+#### `OxlintDiagnostic`
+
+The Schema-backed counterpart of the `OxlintDiagnostic` interface in
+`src/plugin/toFinding.ts`; the two MUST stay in sync.
+
+```json
+{
+  "message": "Avoid async functions",
+  "code": "lens(no-async-function)",
+  "severity": "error | warning",
+  "filename": "src/service.ts",
+  "labels": [{ "span": { "line": 14, "column": 3 } | null }]
+}
+```
+
+#### `ReviewInput`
+
+```json
+{ "diagnostics": [] }
+```
+
+#### `ReviewSummary`
+
+```json
+{ "total": 2, "errors": 1, "warnings": 1 }
+```
+
+#### `ReviewResult`
+
+```json
+{
+  "findings": [],
+  "diagnostics": [],
+  "summary": { "total": 0, "errors": 0, "warnings": 0 },
+  "status": 0
+}
+```
+
+`status` is the aggregate `ExitStatus` derived from findings only: any `error`
+→ `2`, else any `warning` → `1`, else `0`. Non-catalog diagnostics are `off`
+notes and do not change the status.
+
+### `design` — src/operations/design.ts
+
+Combines supplied analysis facts with relevant guidance and returns an
+advisory result with evidence and confidence. Design is advisory, never
+authoritative.
+
+#### `AnalysisFact`
+
+```json
+{
+  "kind": "ast | type | state-pressure",
+  "key": "pipe",
+  "value": "pipe",
+  "evidence": { "source": "…", "…": "…" } | null
+}
+```
+
+`kind` is an open tag naming the analyzer that produced the fact; it is not a
+closed enum, so new analyzers can introduce new kinds without changing this
+contract. The operation is extensible for state-pressure analysis (issue #10):
+a future state-pressure analyzer can supply facts with a distinct `kind`.
+
+#### `DesignRequest`
+
+```json
+{
+  "feature": "compose two services",
+  "effectVersion": "4.0.0",
+  "facts": [],
+  "guidance": []
+}
+```
+
+`guidance` is typically the output of a `lookup`.
+
+#### `DesignAdvice`
+
+```json
+{
+  "guidance": { "id": "g-pipe", "…": "…" },
+  "confidence": 0.9,
+  "applicable": true,
+  "versionStatus": "current"
+}
+```
+
+`confidence` is a deterministic value (0..1): base from the record's
+validation status (`validated` 0.8, `unvalidated` 0.5, `conflict` 0.2), raised
+by facts whose key matches the topic or whose value matches the summary (each
+fact key and value counted at most once), and capped at 0.3 for `conflict`
+guidance or when the record does not apply to the active Effect version.
+
+#### `DesignResult`
+
+```json
+{
+  "feature": "compose two services",
+  "effectVersion": "4.0.0",
+  "advice": [],
+  "diagnostics": []
+}
+```
+
+Advice is ranked by confidence descending, then topic ascending. Diagnostics
+are emitted for incompatible (`stale`/`unknown`) references and for `conflict`
+guidance, so incompatible versioned references are never silently used.
+
+### Operation limitations
+
+- All operations are pure and read-only: they never mutate packs, guidance, or
+  network state, and they do not fetch remote material.
+- `lookup` relevance is a token-overlap heuristic, not semantic search.
+- `design` confidence is a deterministic heuristic, not a calibrated model; it
+  must not be presented as certainty.
+- `review` maps only the initial Lens strict rule set; other oxlint diagnostics
+  are surfaced as non-rule diagnostics rather than coerced into findings.
+
 ## `Drift` — src/Drift.ts
 
 ### `DriftKind`

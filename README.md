@@ -19,6 +19,13 @@ contracts — project/dependency identity, reference packs, guidance/evidence,
 rules/findings, and drift reports. See `docs/contracts.md` for the type and
 serialization definitions.
 
+On top of those contracts sit the adapter-independent read-only operations in
+`src/operations/`: `lookup` (search ingested guidance with provenance and
+version applicability), `review` (map oxlint diagnostics to stable findings),
+and `design` (combine analysis facts with guidance into advisory advice with
+confidence). They centralize policy and analysis logic so no surface adapter
+duplicates it. See `docs/contracts.md` for the operation contracts.
+
 ## Strict rule layer
 
 Lens ships a strict Effect-first AST rule layer on top of upstream Oxlint
