@@ -24,6 +24,10 @@ process (`src/cli/index.ts`) in `--json` mode:
 The command exits `0` when every self-check passes and `1` otherwise, printing
 a per-check summary that names the failing check and the assertion that broke.
 
+`pnpm dogfood` is part of the canonical validation path: `pnpm verify` runs it
+after lint, format, typecheck, and tests, and `pnpm release:check` (the release
+self-review gate) runs the full `pnpm verify` path. See `docs/ci.md`.
+
 ## Bootstrap boundary
 
 This slice is a development-time self-check, not a packaged artifact. It
@@ -56,12 +60,19 @@ pinned Effect version changes, the matching fixture pack must be added to
 `test/fixtures/cache` and the expected version assertion follows automatically
 from `package.json`.
 
+The committed cache is validated by `pnpm policy` (see `docs/ci.md`): every
+production pack manifest must decode, declare `complete`, and have every
+included file present on disk.
+
 ## Future work
 
-- **CI enforcement** — run `pnpm dogfood` in CI so the self-check gates every
-  change.
-- **Drift/waiver policy** — decide how intentional drift and waivers are
-  recorded and enforced.
-- **Release checks** — run the self-check as part of the release pipeline.
+- **Waiver enforcement in the CLI** — `pnpm policy` validates the committed
+  `waivers.json` (schema and scope/path consistency), but the CLI does not yet
+  apply waivers to findings. Applying waivers to `check` output is deferred.
+- **Live upstream drift** — `drift` remains a local, offline slice; comparing
+  against live upstream tooling is deferred.
 - **pi exercise** — the pi adapter (issue #6) does not exist yet; pi dogfooding
   is not claimed here. This slice only verifies the CLI against its own source.
+
+CI enforcement, policy/metadata validation, and release checks are now in place;
+see `docs/ci.md` for what is enforced and what remains deferred.

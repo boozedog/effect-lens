@@ -19,8 +19,10 @@
     "lint": "oxlint",
     "format": "dprint fmt",
     "format:check": "dprint check",
-    "verify": "pnpm lint && pnpm format:check && pnpm check && pnpm test",
-    "dogfood": "node scripts/dogfood.mjs"
+    "verify": "pnpm lint && pnpm format:check && pnpm check && pnpm test && pnpm dogfood && pnpm policy",
+    "dogfood": "node scripts/dogfood.mjs",
+    "policy": "node --experimental-strip-types scripts/policy.mjs",
+    "release:check": "pnpm verify"
   },
   "devDependencies": {
     "@effect/vitest": "4.0.0-rc.109",

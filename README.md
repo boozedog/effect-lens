@@ -27,7 +27,11 @@ from this repository, or `effect-lens --help` from a checked-out project. See
 ## Self-dogfood
 
 Effect Lens checks Effect Lens itself. Run `pnpm dogfood` to verify the real
-CLI against this repository's production source. See `docs/dogfood.md`.
+CLI against this repository's production source, and `pnpm policy` to validate
+the committed waivers, reference-pack manifests, and guidance metadata. Both are
+part of the canonical validation path (`pnpm verify`) and the release
+self-review gate (`pnpm release:check`), and are enforced in CI. See
+`docs/dogfood.md` and `docs/ci.md`.
 
 ## Shared core
 
