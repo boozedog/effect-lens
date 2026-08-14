@@ -435,6 +435,137 @@ stored manifest as its own baseline, so it cannot observe metadata drift until
 a pin/catalog baseline exists; use `verifyPack` with an external baseline for
 that check.
 
+## `GuidanceIngestor` — src/GuidanceIngestor.ts
+
+Read-only ingestion and normalization of guidance from verified local
+reference packs. The ingestor reads a pack's included markdown files, parses
+guidance blocks, and normalizes them into `Guidance` records with `Evidence`
+that preserve the source path, the pack's upstream ref, and Effect version
+applicability. It never fetches or mutates packs. Malformed blocks are surfaced
+as `unvalidated`; contradictory blocks sharing a topic are surfaced as
+`conflict`. Diagnostics and a per-ingest status let callers inspect what
+happened instead of silently overwriting records.
+
+### Entry points
+
+- `ingestPackDir({ packDir })` — explicit pack directory input. Reads
+  `manifest.json` from the directory, then ingests the pack's included files.
+- `ingestPack({ cacheDir, manifest })` — exact verified local pack. Resolves
+  `cacheDir/<manifest.id>`, reads the included files, and reports any that are
+  missing. The caller supplies the manifest (e.g. from `PackVerifier.findPack`).
+
+Both are read-only and produce a `GuidanceIngestResult`.
+
+### `IngestStatus`
+
+```json
+"ok" | "partial" | "failed"
+```
+
+- `ok` — no diagnostics; every record is `validated`.
+- `partial` — ingestion completed but produced diagnostics (malformed,
+  conflicting, or missing-file records).
+- `failed` — the pack manifest could not be read or parsed.
+
+### `IngestDiagnosticSeverity`
+
+```json
+"info" | "warning" | "error"
+```
+
+### `IngestDiagnostic`
+
+```json
+{
+  "file": "LLMS.md",
+  "message": "guidance block has no summary",
+  "severity": "warning",
+  "topic": "Piping | null"
+}
+```
+
+### `GuidanceIngestResult`
+
+```json
+{
+  "pack": { "id": "pack-effect-109", "…": "…" } | null,
+  "guidance": [],
+  "diagnostics": [],
+  "status": "ok"
+}
+```
+
+### Supported input convention
+
+A guidance item is a markdown block introduced by a heading. A level-1 heading
+is treated as the document title and skipped; level-2 and deeper headings start
+guidance blocks. The topic is the full heading path (e.g. `Piping > More
+examples`), so repeated structural headings under different parents do not
+collide. The first non-empty paragraph after the heading is the summary.
+Optional metadata is a fenced code block
+tagged `lens-guidance` placed after the summary, containing `key: value` lines.
+For example:
+
+````markdown
+## Piping
+
+Prefer `pipe` for composition.
+
+```lens-guidance
+applies-to: 4.0.0
+ref: v4.0.0-rc.109
+```
+````
+
+Supported metadata keys:
+
+- `applies-to: <from>` or `applies-to: <from>..<to>` — version applicability
+  window (`from` inclusive, `to` exclusive). Values must start with a numeric
+  semver (`\d+\.\d+\.\d+`).
+- `ref: <ref>` — upstream ref override; defaults to the pack's upstream ref.
+
+Defaults when metadata is absent:
+
+- `source` — always `upstream` (pack material is upstream, never `lens-strict`).
+- `appliesTo` — `{ from: <pack.effectVersion>, to: null }`.
+- `upstreamRef` — the pack's `upstream`.
+
+Each `Guidance` carries one `Evidence` per source file with `source` = the
+pack-relative path, `ref` = the effective upstream ref, `location` =
+`<file>:<heading line>`, `snippet` = the summary, and `attribution` = the
+pack's `attribution` (when present) joined from its license/copyright/notice.
+The record `id` includes the pack id, the pack-relative file path, the topic,
+and the heading line, so ids are unique across files.
+
+### Validation and conflict visibility
+
+- A block with no summary, or with an invalid `applies-to` window, is marked
+  `unvalidated` with a `warning` diagnostic. The record is still produced (the
+  summary falls back to the topic; the window falls back to the pack version)
+  so callers can inspect it rather than losing it.
+- Two blocks sharing a topic with different summaries are both marked
+  `conflict` with an `error` diagnostic when their version windows overlap.
+  Same-topic blocks with non-overlapping windows are different guidance for
+  different Effect versions and are not flagged. They are never silently merged.
+- A missing or unreadable included file is reported as an `error` diagnostic
+  and skipped.
+- A title-only file (no level-2+ headings) produces no records and an `info`
+  diagnostic.
+
+### Limitations
+
+- This slice is read-only and local-only: it does not fetch packs, resolve
+  remote refs, or run CLI commands. Remote acquisition is out of scope.
+- Version strings are validated only as a loose numeric-semver prefix; full
+  semver range semantics are not enforced.
+- Conflict detection is a same-topic/different-summary heuristic gated on
+  overlapping version windows, not semantic contradiction analysis.
+- Only the first paragraph after a heading is used as the summary; multi-line
+  or structured guidance bodies are not yet normalized.
+- This slice is Effect-pack-only: every record is `source: "upstream"`.
+  Importing effect-solutions material (which must be labeled distinctly) is out
+  of scope.
+
 ## `Drift` — src/Drift.ts
 
 ### `DriftKind`
@@ -502,4 +633,9 @@ lockfile (yarn and bun), an unparseable lockfile (including a range specifier
 that must not become a false conflict), a missing dependency, and a dogfood
 check against this repository's real lockfile. `test/PackVerifier.test.ts`
 covers pack lookup, `metadataChanged` detection, and the `missing` / `stale` /
-`partial` / `complete` pack statuses.
+`partial` / `complete` pack statuses. `test/GuidanceIngestor.test.ts` covers
+positive, malformed, conflict (including a 3-block overlapping-window case),
+version-window non-conflict, same-topic/same-summary non-conflict, heading
+hierarchy, unique-id, attribution, ref-override, missing-manifest, and
+missing-file ingestion against the committed cache fixtures and the
+`test/fixtures/ingest/` packs.
