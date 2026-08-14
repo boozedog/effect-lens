@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest"
 import * as DateTime from "effect/DateTime"
+import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as Drift from "../src/Drift.ts"
 import * as ExitStatus from "../src/ExitStatus.ts"
@@ -9,6 +10,7 @@ import * as GuidanceIngestor from "../src/GuidanceIngestor.ts"
 import * as HookMutation from "../src/HookMutation.ts"
 import * as Hooks from "../src/Hooks.ts"
 import * as PackageIdentity from "../src/PackageIdentity.ts"
+import * as PackPlan from "../src/PackPlan.ts"
 import * as PackVerifier from "../src/PackVerifier.ts"
 import * as Provenance from "../src/Provenance.ts"
 import * as ReferencePack from "../src/ReferencePack.ts"
@@ -145,6 +147,92 @@ describe("Serialization round-trips", () => {
       status: "complete"
     })
     roundTrip(PackVerifier.PackVerificationResult, result)
+  })
+
+  it("PackCatalog", () => {
+    const manifest = ReferencePack.makePackManifest({
+      id: "pack-effect-109",
+      effectVersion: "4.0.0-rc.109",
+      packageIdentity: effect109,
+      upstream,
+      includedPaths: ["LLMS.md"],
+      status: "complete"
+    })
+    const catalog = PackPlan.makePackCatalog({
+      name: "baseline",
+      baseline: "test/fixtures/cache",
+      entries: [manifest]
+    })
+    roundTrip(PackPlan.PackCatalog, catalog)
+  })
+
+  it("PackAcquisitionPlan (already-complete)", () => {
+    const resolution = Resolver.makeResolution({
+      expected: effect109,
+      installed: effect109,
+      lockfile: "pnpm-lock",
+      status: "resolved"
+    })
+    const manifest109 = ReferencePack.makePackManifest({
+      id: "pack-effect-109",
+      effectVersion: "4.0.0-rc.109",
+      packageIdentity: effect109,
+      upstream,
+      includedPaths: ["LLMS.md"],
+      status: "complete"
+    })
+    const plan = PackPlan.makePackAcquisitionPlan({
+      project: "/abs/project",
+      cacheDir: "/abs/cache",
+      resolution,
+      expected: effect109,
+      catalogEntry: manifest109,
+      localPack: manifest109,
+      action: "already-complete",
+      steps: [
+        PackPlan.makePackPlanStep({
+          id: "pack-present",
+          title: "Reference pack already complete",
+          action: "already-complete"
+        })
+      ],
+      message: "reference pack is already complete"
+    })
+    roundTrip(PackPlan.PackAcquisitionPlan, plan)
+  })
+
+  it("PackAcquisitionPlan (catalog-entry-missing with diagnostics)", () => {
+    const resolution = Resolver.makeResolution({
+      expected: effect109,
+      installed: effect109,
+      lockfile: "pnpm-lock",
+      status: "resolved"
+    })
+    const plan = PackPlan.makePackAcquisitionPlan({
+      project: "/abs/project",
+      cacheDir: "/abs/cache",
+      resolution,
+      expected: effect109,
+      action: "catalog-entry-missing",
+      steps: [
+        PackPlan.makePackPlanStep({
+          id: "catalog-entry",
+          title: "Provide an explicit catalog entry",
+          action: "catalog-entry-missing",
+          detail: "no catalog entry provides effect 4.0.0-rc.109"
+        })
+      ],
+      diagnostics: [
+        new Finding.Diagnostic({
+          id: "plan-catalog-entry-missing",
+          severity: "warning",
+          message: "no catalog entry provides effect 4.0.0-rc.109",
+          location: Option.none()
+        })
+      ],
+      message: "no catalog entry provides effect 4.0.0-rc.109"
+    })
+    roundTrip(PackPlan.PackAcquisitionPlan, plan)
   })
 
   it("IngestDiagnostic", () => {

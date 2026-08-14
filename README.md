@@ -54,6 +54,26 @@ and `design` (combine analysis facts with guidance into advisory advice with
 confidence). They centralize policy and analysis logic so no surface adapter
 duplicates it. See `docs/contracts.md` for the operation contracts.
 
+## Reference-pack acquisition planning
+
+Lens can plan the acquisition of managed reference packs without touching the
+network or the cache. `src/PackPlan.ts` exposes `planPackAcquisition`, a
+read-only planner that derives the project's exact Effect identity via the
+resolver, classifies the local pack state (`already-complete`,
+`fetch-required`, `stale-pack-present`, `partial-pack-present`,
+`catalog-entry-missing`, `resolution-unavailable`), and returns an ordered,
+JSON-serializable plan. It performs only the resolver/verifier's read-only
+filesystem reads and never writes anything. The catalog input is explicit —
+callers pass the entries directly or load them with `loadPackCatalog` — and a
+catalog entry is selected only by exact name+version match, never by range or
+"any newer" selection.
+
+Planning is strictly read-only: it never fetches, writes, deletes, or updates
+cache files, and it never adds implicit network behavior to `doctor`, `drift`,
+`lookup`, or guidance ingestion. Network acquisition and atomic promotion of a
+chosen pack are intentionally deferred to a later slice; this slice only
+produces the plan.
+
 ## Strict rule layer
 
 Lens ships a strict Effect-first AST rule layer on top of upstream Oxlint

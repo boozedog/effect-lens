@@ -442,6 +442,113 @@ stored manifest as its own baseline, so it cannot observe metadata drift until
 a pin/catalog baseline exists; use `verifyPack` with an external baseline for
 that check.
 
+## `PackPlan` — src/PackPlan.ts
+
+Read-only reference-pack acquisition planning over the existing resolver and
+verifier contracts. The planner derives the project's exact Effect identity via
+the resolver, classifies the local pack state, and returns an ordered,
+JSON-serializable plan of read-only actions. It never fetches, writes, deletes,
+or updates cache files, and it never adds implicit network behavior to other
+commands. Network acquisition and atomic promotion are deferred to a later
+slice.
+
+The catalog input is explicit: callers pass the entries directly or load them
+with `loadPackCatalog`. The catalog is the ONLY place the planner learns a
+source; it never invents a URL from a version string.
+
+### `PackPlanAction`
+
+```json
+[
+  "already-complete",
+  "fetch-required",
+  "stale-pack-present",
+  "partial-pack-present",
+  "catalog-entry-missing",
+  "resolution-unavailable"
+]
+```
+
+- `already-complete` — an exact, intact local pack is present. A complete exact
+  pack is already complete even without a catalog entry (presence beats source;
+  the catalog only gates acquisition).
+- `fetch-required` — the exact pack is absent and an explicit catalog entry
+  exists.
+- `stale-pack-present` — a same-name pack for a different version is cached;
+  the exact pack is absent and a catalog entry exists.
+- `partial-pack-present` — the exact pack is present but does not match the
+  catalog baseline (missing files, changed metadata, or a divergent catalog
+  entry such as a different id, integrity, included path, or upstream commit).
+- `catalog-entry-missing` — the target is a known exact version but no catalog
+  entry provides it.
+- `resolution-unavailable` — the expected Effect identity cannot be resolved, or
+  the declared specifier is not an exact version (for example a `^4.0.0` range
+  from `package.json` after an unparseable or unsupported lockfile).
+
+### `PackPlanStep`
+
+```json
+{
+  "id": "pack-present",
+  "title": "Reference pack already complete",
+  "action": "already-complete",
+  "detail": "… | null"
+}
+```
+
+A single ordered, read-only step in an acquisition plan.
+
+### `PackCatalog`
+
+```json
+{
+  "name": "baseline",
+  "baseline": "/path/to/catalog | null",
+  "entries": [{ "id": "pack-effect-109", "…": "…" }]
+}
+```
+
+An explicit catalog of `PackManifest` entries available for acquisition.
+`baseline` records where the catalog came from so the source input is never
+guessed. `loadPackCatalog(catalogDir)` reads every decodable
+`<catalogDir>/<id>/manifest.json`; an unreadable or empty baseline yields an
+empty catalog.
+
+### `PackAcquisitionPlan`
+
+```json
+{
+  "project": "/abs/project",
+  "cacheDir": "/abs/cache",
+  "resolution": { "…": "…" },
+  "expected": { "name": "effect", "version": "4.0.0-rc.109", "source": "lockfile", "integrity": null } | null,
+  "catalogEntry": { "id": "pack-effect-109", "…": "…" } | null,
+  "localPack": { "id": "pack-effect-109", "…": "…" } | null,
+  "verification": { "manifest": { "…": "…" }, "missingFiles": [], "metadataChanged": false, "stale": false, "message": null } | null,
+  "action": "already-complete",
+  "steps": [{ "id": "pack-present", "title": "Reference pack already complete", "action": "already-complete", "detail": null }],
+  "diagnostics": [],
+  "message": "… | null"
+}
+```
+
+`planPackAcquisition({ projectDir, cacheDir, catalog })` runs the read-only
+planning. Decision rules:
+
+1. No target identity → `resolution-unavailable`.
+2. Declared specifier is not an exact version → `resolution-unavailable`.
+3. No exact catalog entry: an intact exact local pack is `already-complete`;
+   otherwise `catalog-entry-missing` (plus a stale step only when the cached
+   pack is genuinely a different version).
+4. Exact catalog entry present: absent exact pack → `stale-pack-present` /
+   `fetch-required`; present exact pack → `already-complete` when it matches the
+   catalog baseline (via `verifyPack` against the selected entry), else
+   `partial-pack-present`.
+
+`selectCatalogEntry` is the documented catalog rule: an exact `samePackage`
+(name and version) match only — never a range, compatible, or "any newer"
+selection.
+
 ## `GuidanceIngestor` — src/GuidanceIngestor.ts
 
 Read-only ingestion and normalization of guidance from verified local
