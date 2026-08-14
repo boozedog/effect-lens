@@ -1,7 +1,8 @@
 # Effect Lens CLI
 
 The `effect-lens` CLI is a thin, read-only adapter over the shared core
-operations. It exposes three commands — `doctor`, `drift`, and `check` — that
+operations. It exposes five commands — `doctor`, `drift`, `check`, `setup`, and
+`hooks` — that
 inspect a project's Effect tooling and report findings and diagnostics with
 stable human-readable and machine-readable output and stable exit codes.
 
@@ -91,15 +92,45 @@ the resulting findings. `--path` is resolved relative to `--project` and
 defaults to the project directory. If oxlint is unavailable or fails, a warning
 diagnostic is emitted instead of crashing.
 
+### `effect-lens setup --dry-run`
+
+Builds a reviewable, ordered setup plan with no mutations. The plan inspects the
+project's package manager, Effect dependency, reference-pack state, oxlint/Lens
+configuration, and hook-manager state, and returns an ordered list of steps.
+
+```sh
+effect-lens setup --dry-run --project . --cache ~/.cache/effect-lens --json
+```
+
+`setup` requires `--dry-run`; running `setup` without it exits `2` because
+actual setup mutation is not yet implemented. The plan format, read-only
+guarantee, and supported hook managers are documented in
+[`docs/setup.md`](setup.md).
+
+### `effect-lens hooks status`
+
+Reports the state of known hook managers and whether an `effect-lens` check is
+installed, absent, or ambiguous.
+
+```sh
+effect-lens hooks status --project . --cache ~/.cache/effect-lens --json
+```
+
+`hooks` requires the `status` subcommand; `hooks install` and `hooks uninstall`
+are deferred. The supported hook managers and detection rules are documented in
+[`docs/setup.md`](setup.md).
+
 ## Offline and read-only behavior
 
-All three commands are strictly read-only:
+All five commands are strictly read-only:
 
 - They never fetch reference packs or any network resource.
 - They never mutate caches, lockfiles, `package.json`, or any project
   configuration.
 - `check` writes a temporary oxlint config to the OS temp directory and removes
   it afterwards; it never writes into the project.
+- `setup --dry-run` and `hooks status` never write hook files, oxlint config,
+  dependencies, or packs.
 
 ## Current limitations
 
@@ -110,8 +141,8 @@ All three commands are strictly read-only:
 - `check` runs the Lens strict rules and the standard correctness/suspicious
   categories. It does not yet run the full `lookup`/`design`/state-pressure
   analysis surfaces.
-- `setup` and `hooks install|status|uninstall` (from issue #9) are not yet
-  implemented; this slice is read-only by design.
+- `setup` mutation and `hooks install|uninstall` (from issue #9) are not yet
+  implemented; `setup --dry-run` and `hooks status` are read-only by design.
 - The CLI requires Node's native type stripping (Node 23.6+, or 22.6+ with
   `--experimental-strip-types`).
 

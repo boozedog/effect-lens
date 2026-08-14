@@ -24,7 +24,7 @@
  * @since 0.0.0
  */
 import { spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -85,6 +85,50 @@ const runCli = (args) => {
 const check = (name, ok, detail) => ({ name, ok, detail })
 
 /**
+ * Snapshots the config files that `setup --dry-run` and `hooks status` inspect
+ * so the self-check can prove those commands changed no project files.
+ *
+ * @since 0.0.0
+ */
+const snapshotConfig = (projectDir) => {
+  const paths = [
+    "package.json",
+    ".oxlintrc.json",
+    ".oxlintrc",
+    "lefthook.yml",
+    "lefthook.yaml",
+    ".pre-commit-config.yaml",
+    ".pre-commit-config.yml"
+  ]
+  const result = {}
+  for (const rel of paths) {
+    const p = join(projectDir, rel)
+    if (existsSync(p)) result[rel] = readFileSync(p, "utf8")
+  }
+  // Snapshot any husky hook files so the read-only proof can see hook writes.
+  const huskyDir = join(projectDir, ".husky")
+  if (existsSync(huskyDir)) {
+    const walk = (dir, prefix) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const rel = `${prefix}/${entry.name}`
+        const p = join(dir, entry.name)
+        if (entry.isDirectory()) walk(p, rel)
+        else if (entry.isFile()) result[rel] = readFileSync(p, "utf8")
+      }
+    }
+    walk(huskyDir, ".husky")
+  }
+  return result
+}
+
+/**
+ * True when two config snapshots are identical.
+ *
+ * @since 0.0.0
+ */
+const configsEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+
+/**
  * Runs the three self-checks (doctor, drift, check) against a project and
  * returns the aggregate outcome. `expectedEffectVersion` defaults to the
  * project's declared `effect` specifier.
@@ -98,6 +142,7 @@ export const runDogfood = (args) => {
   const expected = args.expectedEffectVersion ?? expectedEffectVersion(projectDir)
   const checks = []
   const payloads = {}
+  const configBefore = snapshotConfig(projectDir)
 
   // 1. doctor: resolved Effect identity and complete reference pack.
   const doctor = runCli(["doctor", "--project", projectDir, "--cache", cacheDir, "--json"])
@@ -174,6 +219,67 @@ export const runDogfood = (args) => {
         : `expected 0 findings on ${path}, got status ${checkRun.status} ` +
             `(machine ${checkJson?.machineOutput?.status ?? "n/a"}, ` +
             `${findings.length} finding(s), ${files} file(s))`
+    )
+  )
+
+  // 4. setup --dry-run: a read-only, well-formed plan with no file changes.
+  const setup = runCli([
+    "setup",
+    "--dry-run",
+    "--project",
+    projectDir,
+    "--cache",
+    cacheDir,
+    "--json"
+  ])
+  const setupJson = setup.json
+  payloads.setup = setupJson
+  const setupSteps = setupJson?.plan?.steps ?? []
+  const setupReadOnly = configsEqual(configBefore, snapshotConfig(projectDir))
+  const setupOk =
+    setupReadOnly &&
+    setupJson?.plan?.oxlint?.status === "configured" &&
+    setupSteps.some((step) => step.id === "hooks")
+  checks.push(
+    check(
+      "setup",
+      setupOk,
+      setupOk
+        ? `${setupSteps.length} plan step(s), oxlint configured, read-only`
+        : `expected a read-only setup plan, got status ${setup.status} ` +
+            `(machine ${setupJson?.machineOutput?.status ?? "n/a"}, ` +
+            `${setupSteps.length} step(s), read-only ${setupReadOnly})`
+    )
+  )
+
+  // 5. hooks status: a read-only status report over known hook managers.
+  const hooks = runCli([
+    "hooks",
+    "status",
+    "--project",
+    projectDir,
+    "--cache",
+    cacheDir,
+    "--json"
+  ])
+  const hooksJson = hooks.json
+  payloads.hooks = hooksJson
+  const hooksReadOnly = configsEqual(configBefore, snapshotConfig(projectDir))
+  const hooksManagers = hooksJson?.hooks?.managers ?? []
+  const hooksOk =
+    hooksReadOnly &&
+    Array.isArray(hooksManagers) &&
+    hooksManagers.length > 0 &&
+    typeof hooksJson?.hooks?.lensStatus === "string"
+  checks.push(
+    check(
+      "hooks",
+      hooksOk,
+      hooksOk
+        ? `${hooksManagers.length} hook manager(s) reported, read-only`
+        : `expected a read-only hooks status, got status ${hooks.status} ` +
+            `(machine ${hooksJson?.machineOutput?.status ?? "n/a"}, ` +
+            `${hooksManagers.length} manager(s), read-only ${hooksReadOnly})`
     )
   )
 

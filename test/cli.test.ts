@@ -140,3 +140,91 @@ describe("CLI check", () => {
     expect(json.machineOutput.findings.length).toBeGreaterThan(0)
   })
 })
+
+describe("CLI setup", () => {
+  it("exits 2 when setup is run without --dry-run (mutation deferred)", () => {
+    const { stderr, status } = runCli(["setup", "--project", project("npm-valid")])
+    expect(status).toBe(2)
+    expect(stderr).toContain("setup mutation is not yet implemented")
+  })
+
+  it("exits 1 for a project needing setup and emits a plan in JSON mode", () => {
+    const { stdout, status } = runCli([
+      "setup",
+      "--dry-run",
+      "--project",
+      project("npm-valid"),
+      "--cache",
+      cacheDir,
+      "--json"
+    ])
+    expect(status).toBe(1)
+    const json = JSON.parse(stdout) as {
+      machineOutput: { status: number }
+      plan: { steps: Array<{ id: string; status: string }> }
+    }
+    expect(json.machineOutput.status).toBe(1)
+    expect(json.plan.steps.length).toBeGreaterThan(0)
+  })
+
+  it("exits 2 for an unsupported package manager", () => {
+    const { status } = runCli([
+      "setup",
+      "--dry-run",
+      "--project",
+      project("bun-lockfile"),
+      "--cache",
+      cacheDir,
+      "--json"
+    ])
+    expect(status).toBe(2)
+  })
+})
+
+describe("CLI hooks", () => {
+  it("exits 2 when hooks is run without a subcommand", () => {
+    const { stderr, status } = runCli(["hooks", "--project", project("npm-valid")])
+    expect(status).toBe(2)
+    expect(stderr).toContain("unknown hooks subcommand")
+  })
+
+  it("exits 2 for hooks install (mutation deferred)", () => {
+    const { stderr, status } = runCli(["hooks", "install", "--project", project("npm-valid")])
+    expect(status).toBe(2)
+    expect(stderr).toContain("hooks install is not yet implemented")
+  })
+
+  it("exits 2 for hooks uninstall (mutation deferred)", () => {
+    const { stderr, status } = runCli(["hooks", "uninstall", "--project", project("npm-valid")])
+    expect(status).toBe(2)
+    expect(stderr).toContain("hooks uninstall is not yet implemented")
+  })
+
+  it("exits 0 for a project with lens hooks installed", () => {
+    const { stdout, status } = runCli([
+      "hooks",
+      "status",
+      "--project",
+      project("hooks-husky-installed"),
+      "--cache",
+      cacheDir,
+      "--json"
+    ])
+    expect(status).toBe(0)
+    const json = JSON.parse(stdout) as { hooks: { lensStatus: string } }
+    expect(json.hooks.lensStatus).toBe("installed")
+  })
+
+  it("exits 1 for a project with no hook manager", () => {
+    const { status } = runCli([
+      "hooks",
+      "status",
+      "--project",
+      project("hooks-clean"),
+      "--cache",
+      cacheDir,
+      "--json"
+    ])
+    expect(status).toBe(1)
+  })
+})

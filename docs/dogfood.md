@@ -11,7 +11,7 @@ check.
 pnpm dogfood
 ```
 
-This runs three self-checks against the repository root, each via the real CLI
+This runs five self-checks against the repository root, each via the real CLI
 process (`src/cli/index.ts`) in `--json` mode:
 
 1. `doctor` — asserts the resolved Effect identity matches the version declared
@@ -20,9 +20,20 @@ process (`src/cli/index.ts`) in `--json` mode:
    all-`compatible`.
 3. `check --path src` — asserts zero Lens findings on the production source
    and that at least one file was actually linted.
+4. `setup --dry-run` — asserts a well-formed, read-only setup plan (oxlint
+   configured, a `hooks` step present) and that no inspected config or hook
+   file changed.
+5. `hooks status` — asserts a read-only status report over the known hook
+   managers and that no inspected config or hook file changed.
 
 The command exits `0` when every self-check passes and `1` otherwise, printing
 a per-check summary that names the failing check and the assertion that broke.
+
+The `setup` and `hooks` self-checks snapshot the config and hook files they
+inspect (`package.json`, `.oxlintrc.json`, `.oxlintrc`, `lefthook.yml`,
+`lefthook.yaml`, `.pre-commit-config.yaml`, `.pre-commit-config.yml`, and any
+`.husky/**` files) before and after running, and assert they are unchanged, so
+the read-only guarantee is proven against the real CLI.
 
 `pnpm dogfood` is part of the canonical validation path: `pnpm verify` runs it
 after lint, format, typecheck, and tests, and `pnpm release:check` (the release

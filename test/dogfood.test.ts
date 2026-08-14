@@ -3,7 +3,7 @@
  *
  * These exercise the `runDogfood` harness from `scripts/dogfood.mjs`, which
  * spawns the real CLI against a project and asserts the expected doctor,
- * drift, and check outcomes. The success case runs against this repository's
+ * drift, check, setup, and hooks outcomes. The success case runs against this repository's
  * production source; the failure cases exercise the diagnostic paths that make
  * the self-check fail with a non-zero status.
  *
@@ -22,17 +22,40 @@ const DOGFOOD = fileURLToPath(new URL("../scripts/dogfood.mjs", import.meta.url)
 const runProcess = (args: Array<string>) =>
   spawnSync(process.execPath, [DOGFOOD, ...args], { encoding: "utf8", cwd: repoRoot })
 
+interface DogfoodPayloads {
+  doctor?: {
+    resolution?: { status?: string }
+    pack?: { status?: string }
+    machineOutput?: { status?: number }
+  }
+  check?: { oxlint?: { files?: number }; machineOutput?: { findings?: Array<unknown> } }
+  setup?: { plan?: { oxlint?: { status?: string } } }
+  hooks?: { hooks?: { managers?: Array<unknown> } }
+}
+
+const payloadsOf = (result: { payloads: unknown }): DogfoodPayloads =>
+  result.payloads as DogfoodPayloads
+
 describe("self-dogfood", () => {
   it("passes against this repository's production source", () => {
     const result = runDogfood({ projectDir: repoRoot, cacheDir })
     expect(result.ok).toBe(true)
-    expect(result.checks.map((c) => c.name)).toEqual(["doctor", "drift", "check"])
+    expect(result.checks.map((c) => c.name)).toEqual([
+      "doctor",
+      "drift",
+      "check",
+      "setup",
+      "hooks"
+    ])
     for (const c of result.checks) {
       expect(c.ok, `${c.name}: ${c.detail}`).toBe(true)
     }
-    expect(result.payloads.doctor?.resolution.status).toBe("resolved")
-    expect(result.payloads.doctor?.pack.status).toBe("complete")
-    expect(result.payloads.check?.oxlint.files).toBeGreaterThan(0)
+    const payloads = payloadsOf(result)
+    expect(payloads.doctor?.resolution?.status).toBe("resolved")
+    expect(payloads.doctor?.pack?.status).toBe("complete")
+    expect(payloads.check?.oxlint?.files).toBeGreaterThan(0)
+    expect(payloads.setup?.plan?.oxlint?.status).toBe("configured")
+    expect(payloads.hooks?.hooks?.managers?.length).toBeGreaterThan(0)
   })
 
   it("fails the doctor check when the project has no effect dependency", () => {
@@ -42,8 +65,9 @@ describe("self-dogfood", () => {
     expect(doctor?.ok).toBe(false)
     expect(doctor?.detail).toContain("expected a declared effect dependency")
     // Assert the real outcome, not just the harness's summary string.
-    expect(result.payloads.doctor?.machineOutput.status).toBe(2)
-    expect(result.payloads.doctor?.resolution.status).toBe("missing")
+    const payloads = payloadsOf(result)
+    expect(payloads.doctor?.machineOutput?.status).toBe(2)
+    expect(payloads.doctor?.resolution?.status).toBe("missing")
   })
 
   it("fails the check when the target path has Lens findings", () => {
@@ -57,8 +81,9 @@ describe("self-dogfood", () => {
     expect(check?.ok).toBe(false)
     expect(check?.detail).toContain("expected 0 findings")
     // Assert the real outcome: the CLI actually linted files and found findings.
-    expect(result.payloads.check?.oxlint.files).toBeGreaterThan(0)
-    expect(result.payloads.check?.machineOutput.findings.length).toBeGreaterThan(0)
+    const payloads = payloadsOf(result)
+    expect(payloads.check?.oxlint?.files).toBeGreaterThan(0)
+    expect(payloads.check?.machineOutput?.findings?.length).toBeGreaterThan(0)
   })
 })
 
@@ -70,6 +95,8 @@ describe("self-dogfood process", () => {
     expect(result.stdout).toContain("ok: doctor")
     expect(result.stdout).toContain("ok: drift")
     expect(result.stdout).toContain("ok: check")
+    expect(result.stdout).toContain("ok: setup")
+    expect(result.stdout).toContain("ok: hooks")
   })
 
   it("exits 1 and names the failing check for a broken project", () => {

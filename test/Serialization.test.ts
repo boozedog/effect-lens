@@ -6,12 +6,14 @@ import * as ExitStatus from "../src/ExitStatus.ts"
 import * as Finding from "../src/Finding.ts"
 import * as Guidance from "../src/Guidance.ts"
 import * as GuidanceIngestor from "../src/GuidanceIngestor.ts"
+import * as Hooks from "../src/Hooks.ts"
 import * as PackageIdentity from "../src/PackageIdentity.ts"
 import * as PackVerifier from "../src/PackVerifier.ts"
 import * as Provenance from "../src/Provenance.ts"
 import * as ReferencePack from "../src/ReferencePack.ts"
 import * as Resolver from "../src/Resolver.ts"
 import * as Rule from "../src/Rule.ts"
+import * as Setup from "../src/Setup.ts"
 
 const effect109 = PackageIdentity.makePackageIdentity({
   name: "effect",
@@ -177,5 +179,70 @@ describe("Serialization round-trips", () => {
       status: "ok"
     })
     roundTrip(GuidanceIngestor.GuidanceIngestResult, result)
+  })
+
+  it("HooksStatus", () => {
+    const status = Hooks.makeHooksStatus({
+      lensStatus: "installed",
+      managers: [
+        Hooks.makeHookManagerStatus({
+          manager: "husky",
+          present: true,
+          configPath: ".husky",
+          lensStatus: "installed",
+          detail: "a husky hook references effect-lens"
+        })
+      ],
+      diagnostics: []
+    })
+    roundTrip(Hooks.HooksStatus, status)
+  })
+
+  it("SetupPlan", () => {
+    const resolution = Resolver.makeResolution({
+      expected: effect109,
+      installed: effect109,
+      lockfile: "pnpm-lock",
+      status: "resolved"
+    })
+    const pack = PackVerifier.makePackVerificationResult({
+      resolution,
+      pack: ReferencePack.makePackManifest({
+        id: "pack-effect-109",
+        effectVersion: "4.0.0-rc.109",
+        packageIdentity: effect109,
+        upstream,
+        includedPaths: ["LLMS.md"],
+        status: "complete"
+      }),
+      status: "complete"
+    })
+    const plan = Setup.makeSetupPlan({
+      project: "/abs/path",
+      packageManager: "pnpm@11.20.0",
+      effect: effect109,
+      resolution,
+      pack,
+      oxlint: Setup.makeOxlintStatus({
+        configPath: ".oxlintrc.json",
+        lensPluginConfigured: true,
+        status: "configured"
+      }),
+      hooks: Hooks.makeHooksStatus({
+        lensStatus: "absent",
+        managers: [],
+        diagnostics: []
+      }),
+      steps: [
+        Setup.makeSetupStep({
+          id: "package-manager",
+          title: "Detect package manager",
+          status: "ok",
+          detail: "pnpm detected"
+        })
+      ],
+      diagnostics: []
+    })
+    roundTrip(Setup.SetupPlan, plan)
   })
 })

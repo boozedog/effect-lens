@@ -1,17 +1,20 @@
 # Effect Lens
 
 Effect Lens is an advisory tool for Effect v4 TypeScript development. It ships a
-read-only CLI (`effect-lens doctor`, `effect-lens drift`, `effect-lens check`)
-that inspects a project's Effect tooling and reports findings and diagnostics
-with stable human-readable and machine-readable output and stable exit codes.
-See `docs/cli.md` for the command reference, offline/read-only behavior, and
-current limitations.
+read-only CLI (`effect-lens doctor`, `effect-lens drift`, `effect-lens check`,
+`effect-lens setup --dry-run`, `effect-lens hooks status`) that inspects a
+project's Effect tooling and reports findings and diagnostics with stable
+human-readable and machine-readable output and stable exit codes. See
+`docs/cli.md` for the command reference, offline/read-only behavior, and current
+limitations.
 
 It will combine the local Effect guidance in `../effect/LLMS.md` with TypeScript AST and type analysis to help agents design, review, and improve Effect code. Findings are evidence-backed suggestions, not authoritative rewrites.
 
 Planned surfaces:
 
 - `effect-lens doctor` / `drift` / `check` for local tooling inspection.
+- `effect-lens setup --dry-run` / `hooks status` for read-only setup planning
+  and hook-manager inspection.
 - `effect_lens_lookup` for local Effect guidance and source lookup.
 - `effect_lens_review` for AST/type-aware code review.
 - `effect_lens_design` for Effect-first implementation guidance.

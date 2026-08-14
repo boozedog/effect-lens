@@ -19,6 +19,7 @@
     "**/dist",
     "**/coverage",
     "test/fixtures/ingest/unclosed-fence/**",
+    "test/fixtures/projects/hooks-bad-package-json/**",
     "pnpm-lock.yaml"
   ],
   "plugins": [

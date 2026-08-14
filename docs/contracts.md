@@ -874,6 +874,98 @@ reference-pack problems are advisory `warning`s.
 }
 ```
 
+## `Hooks` — src/Hooks.ts
+
+The read-only hook-manager status model used by `hooks status` and embedded in
+the setup plan.
+
+### `LensInstallStatus`
+
+```json
+"installed" | "absent" | "ambiguous"
+```
+
+`installed` — a present, readable manager config references `effect-lens`.
+`absent` — no `effect-lens` reference found in a readable config. `ambiguous` —
+a present config cannot be read, so the state cannot be determined.
+
+### `HookManagerStatus`
+
+```json
+{
+  "manager": "husky | lefthook | pre-commit | lint-staged | simple-git-hooks",
+  "present": true,
+  "configPath": ".husky/pre-commit | null",
+  "lensStatus": "installed | absent | ambiguous",
+  "detail": "… | null"
+}
+```
+
+### `HooksStatus`
+
+```json
+{
+  "lensStatus": "installed | absent | ambiguous",
+  "managers": [],
+  "diagnostics": []
+}
+```
+
+`lensStatus` is `installed` when any manager is installed, `ambiguous` when any
+manager is ambiguous and none is installed, and `absent` otherwise.
+
+## `Setup` — src/Setup.ts
+
+The read-only setup plan model used by `setup --dry-run`.
+
+### `SetupStepStatus`
+
+```json
+"ok" | "needed" | "unsupported" | "skip"
+```
+
+### `SetupStep`
+
+```json
+{
+  "id": "package-manager",
+  "title": "Detect package manager",
+  "status": "ok | needed | unsupported | skip",
+  "detail": "… | null"
+}
+```
+
+### `OxlintStatus`
+
+```json
+{
+  "configPath": ".oxlintrc.json | null",
+  "lensPluginConfigured": true,
+  "status": "configured | missing | ambiguous"
+}
+```
+
+### `SetupPlan`
+
+```json
+{
+  "project": "/abs/path",
+  "packageManager": "pnpm@11.20.0 | null",
+  "effect": { "name": "effect", "version": "4.0.0-rc.109", "source": "lockfile", "integrity": null } | null,
+  "resolution": { "…": "…" },
+  "pack": { "…": "…" },
+  "oxlint": { "…": "…" },
+  "hooks": { "…": "…" },
+  "steps": [],
+  "diagnostics": []
+}
+```
+
+`resolution` and `pack` reuse the shared `Resolution` and
+`PackVerificationResult` contracts; `hooks` reuses `HooksStatus`. The plan is
+read-only: it never writes config, dependencies, packs, or hooks. See
+[`docs/setup.md`](setup.md) for the step semantics and supported hook managers.
+
 ## Invariants enforced by the schema
 
 - A `Finding` always has `rule`, `severity`, `source`, `location`, and at least
