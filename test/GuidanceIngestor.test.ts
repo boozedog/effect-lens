@@ -78,6 +78,15 @@ describe("ingestPackDir", () => {
     expect(layers!.evidence[0].ref).toEqual(Option.some("v4.0.0-rc.110"))
   })
 
+  it("clears the pack commit when the ref is overridden", () => {
+    const result = GuidanceIngestor.ingestPackDir({ packDir: ingestDir("valid") })
+    const layers = result.guidance.find((g) => g.topic === "Layers")
+    expect(layers).toBeDefined()
+    const upstream = Option.getOrNull(layers!.upstreamRef)
+    expect(upstream?.ref).toEqual(Option.some("v4.0.0-rc.110"))
+    expect(Option.isNone(upstream?.commit ?? Option.none())).toBe(true)
+  })
+
   it("defaults version applicability and ref to the pack when metadata is absent", () => {
     const result = GuidanceIngestor.ingestPackDir({ packDir: ingestDir("valid") })
     const testing = result.guidance.find((g) => g.topic === "Testing")
@@ -119,18 +128,49 @@ describe("ingestPackDir", () => {
     expect(result.diagnostics.some((d) => d.message.includes("conflicting guidance"))).toBe(true)
   })
 
-  it("flags a topic when any different-summary pair has overlapping windows", () => {
+  it("does not let an invalid applies-to mark a disjoint sibling as conflict", () => {
+    const result = GuidanceIngestor.ingestPackDir({ packDir: ingestDir("invalid-window") })
+    // The `not-a-version` block is unvalidated with a fallback window; it must
+    // not drag the well-formed 5.0.0..6.0.0 sibling into a conflict.
+    expect(result.status).toBe("partial")
+    expect(result.guidance).toHaveLength(2)
+    const bySummary = new Map(result.guidance.map((g) => [g.summary, g.validationStatus]))
+    expect(bySummary.get("Use `Effect.pipe`.")).toBe("validated")
+    expect(bySummary.get("Never use `pipe`.")).toBe("unvalidated")
+    expect(result.diagnostics.some((d) => d.message.includes("conflicting guidance"))).toBe(false)
+  })
+
+  it("flags only the overlapping contradictory pair, not disjoint siblings", () => {
     const result = GuidanceIngestor.ingestPackDir({ packDir: ingestDir("conflict-3") })
     // Three same-topic blocks: the first two windows overlap (3.0.0..4.0.0 and
     // 3.5.0..4.5.0) with different summaries; the third (5.0.0) is disjoint.
-    // The overlapping contradictory pair must be a conflict.
     expect(result.status).toBe("partial")
     expect(result.guidance).toHaveLength(3)
+    const bySummary = new Map(result.guidance.map((g) => [g.summary, g.validationStatus]))
+    expect(bySummary.get("Use `pipe` for composition.")).toBe("conflict")
+    expect(bySummary.get("Never use `pipe`.")).toBe("conflict")
+    expect(bySummary.get("Use `Effect.pipe`.")).toBe("validated")
+    expect(result.diagnostics.some((d) => d.message.includes("conflicting guidance"))).toBe(true)
+  })
+
+  it("detects overlap between a default rc window and a release window", () => {
+    const result = GuidanceIngestor.ingestPackDir({ packDir: ingestDir("version-overlap") })
+    // Default window 4.0.0-rc.109 overlaps 3.0.0..4.0.0 (rc.109 < 4.0.0).
+    expect(result.status).toBe("partial")
+    expect(result.guidance).toHaveLength(2)
     for (const g of result.guidance) {
-      expect(g.topic).toBe("Piping")
       expect(g.validationStatus).toBe("conflict")
     }
-    expect(result.diagnostics.some((d) => d.message.includes("conflicting guidance"))).toBe(true)
+  })
+
+  it("compares prerelease identifiers when detecting overlap", () => {
+    const result = GuidanceIngestor.ingestPackDir({ packDir: ingestDir("version-prerelease") })
+    // 4.0.0-rc.1..4.0.0 and 4.0.0-rc.50..4.1.0 overlap.
+    expect(result.status).toBe("partial")
+    expect(result.guidance).toHaveLength(2)
+    for (const g of result.guidance) {
+      expect(g.validationStatus).toBe("conflict")
+    }
   })
 
   it("does not flag same-topic/same-summary blocks as conflict", () => {
@@ -166,12 +206,9 @@ describe("ingestPackDir", () => {
     const topics = result.guidance.map((g) => g.topic)
     expect(topics).toContain("Piping")
     expect(topics).toContain("Layers")
-    // Two repeated `### More examples` under Piping share a topic but the same
-    // summary, so they are not a conflict.
     const morePiping = result.guidance.filter((g) => g.topic === "Piping > More examples")
     expect(morePiping).toHaveLength(2)
     expect(morePiping[0].validationStatus).toBe("validated")
-    // The `### More examples` under Layers is a distinct topic.
     expect(topics).toContain("Layers > More examples")
   })
 
@@ -181,6 +218,38 @@ describe("ingestPackDir", () => {
     const ids = result.guidance.map((g) => g.id)
     expect(new Set(ids).size).toBe(2)
     expect(ids[0]).not.toBe(ids[1])
+  })
+
+  it("keeps ids unique for paths that collide under a lossy slug", () => {
+    const result = GuidanceIngestor.ingestPackDir({ packDir: ingestDir("path-collision") })
+    expect(result.guidance).toHaveLength(2)
+    const ids = result.guidance.map((g) => g.id)
+    expect(new Set(ids).size).toBe(2)
+    expect(ids[0]).not.toBe(ids[1])
+  })
+
+  it("rejects included paths that resolve outside the pack directory", () => {
+    const result = GuidanceIngestor.ingestPackDir({ packDir: ingestDir("traversal") })
+    expect(result.status).toBe("partial")
+    expect(result.guidance).toEqual([])
+    expect(result.diagnostics.some((d) => d.message.includes("outside the pack directory"))).toBe(
+      true
+    )
+  })
+
+  it("recurses markdown under an included directory", () => {
+    const result = GuidanceIngestor.ingestPackDir({ packDir: ingestDir("directory") })
+    expect(result.status).toBe("ok")
+    expect(result.guidance).toHaveLength(2)
+    const sources = result.guidance.map((g) => g.evidence[0].source)
+    expect(sources).toContain("ai-docs/guide.md")
+    expect(sources).toContain("ai-docs/sub/extra.md")
+  })
+
+  it("warns on an unclosed code fence", () => {
+    const result = GuidanceIngestor.ingestPackDir({ packDir: ingestDir("unclosed-fence") })
+    expect(result.status).toBe("partial")
+    expect(result.diagnostics.some((d) => d.message.includes("unclosed code fence"))).toBe(true)
   })
 
   it("copies pack attribution onto each evidence record", () => {

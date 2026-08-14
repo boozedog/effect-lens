@@ -5,6 +5,7 @@ import * as Drift from "../src/Drift.ts"
 import * as ExitStatus from "../src/ExitStatus.ts"
 import * as Finding from "../src/Finding.ts"
 import * as Guidance from "../src/Guidance.ts"
+import * as GuidanceIngestor from "../src/GuidanceIngestor.ts"
 import * as PackageIdentity from "../src/PackageIdentity.ts"
 import * as PackVerifier from "../src/PackVerifier.ts"
 import * as Provenance from "../src/Provenance.ts"
@@ -139,5 +140,41 @@ describe("Serialization round-trips", () => {
       status: "complete"
     })
     roundTrip(PackVerifier.PackVerificationResult, result)
+  })
+
+  it("IngestDiagnostic", () => {
+    const diagnostic = GuidanceIngestor.makeIngestDiagnostic({
+      file: "LLMS.md",
+      message: "guidance block has no summary",
+      severity: "warning",
+      topic: "Piping"
+    })
+    roundTrip(GuidanceIngestor.IngestDiagnostic, diagnostic)
+  })
+
+  it("GuidanceIngestResult", () => {
+    const result = GuidanceIngestor.makeGuidanceIngestResult({
+      pack: ReferencePack.makePackManifest({
+        id: "pack-effect-109",
+        effectVersion: "4.0.0-rc.109",
+        packageIdentity: effect109,
+        upstream,
+        includedPaths: ["LLMS.md"],
+        status: "complete"
+      }),
+      guidance: [
+        Guidance.makeGuidance({
+          id: "g-pipe",
+          topic: "Piping",
+          summary: "Prefer pipe.",
+          source: "upstream",
+          validationStatus: "validated",
+          evidence: []
+        })
+      ],
+      diagnostics: [],
+      status: "ok"
+    })
+    roundTrip(GuidanceIngestor.GuidanceIngestResult, result)
   })
 })

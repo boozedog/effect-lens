@@ -18,8 +18,8 @@
  */
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
-import { existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { join, relative, resolve, sep } from "node:path"
 import {
   Guidance,
   GuidanceAppliesTo,
@@ -163,6 +163,11 @@ interface ParsedBlock {
   metadata: Record<string, string>
 }
 
+interface ParseResult {
+  blocks: Array<ParsedBlock>
+  unclosedFence: boolean
+}
+
 const HEADING_RE = /^(#{2,6})\s+(.+)$/
 const H1_RE = /^#\s+(.+)$/
 const FENCE_RE = /^```(\S*)\s*$/
@@ -180,7 +185,7 @@ const VERSION_RE = /^\d+\.\d+\.\d+/
  *
  * @internal
  */
-const parseMarkdown = (file: string, content: string): Array<ParsedBlock> => {
+const parseMarkdown = (file: string, content: string): ParseResult => {
   const lines = content.split(/\r?\n/)
   const blocks: Array<ParsedBlock> = []
   const stack: Array<{ level: number; text: string }> = []
@@ -257,7 +262,7 @@ const parseMarkdown = (file: string, content: string): Array<ParsedBlock> => {
     }
   }
   flush()
-  return blocks
+  return { blocks, unclosedFence: inFence }
 }
 
 const parseMetadata = (lines: Array<string>): Record<string, string> => {
@@ -267,6 +272,74 @@ const parseMetadata = (lines: Array<string>): Record<string, string> => {
     if (m !== null) meta[m[1]] = m[2].trim()
   }
   return meta
+}
+
+// --- semver-aware comparison ------------------------------------------------
+
+interface ParsedVersion {
+  core: Array<number>
+  pre: Array<string>
+}
+
+const parseVersion = (v: string): ParsedVersion => {
+  const [coreStr, preStr] = v.split("-", 2)
+  const core = coreStr.split(".").map((n) => parseInt(n, 10) || 0)
+  const pre = preStr === undefined ? [] : preStr.split(".")
+  return { core, pre }
+}
+
+const compareIdentifiers = (a: string, b: string): number => {
+  const aNum = /^\d+$/.test(a)
+  const bNum = /^\d+$/.test(b)
+  if (aNum && bNum) {
+    const x = parseInt(a, 10)
+    const y = parseInt(b, 10)
+    return x < y ? -1 : x > y ? 1 : 0
+  }
+  if (aNum) return -1 // numeric identifiers are always less than alphanumeric
+  if (bNum) return 1
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
+const comparePrerelease = (a: Array<string>, b: Array<string>): number => {
+  const len = Math.min(a.length, b.length)
+  for (let i = 0; i < len; i++) {
+    const c = compareIdentifiers(a[i], b[i])
+    if (c !== 0) return c
+  }
+  return a.length < b.length ? -1 : a.length > b.length ? 1 : 0
+}
+
+/**
+ * Semver-aware comparison. A release is greater than any prerelease of the
+ * same core version (`4.0.0 > 4.0.0-rc.109`); prerelease identifiers are
+ * compared dot-by-dot with numeric identifiers compared numerically.
+ *
+ * @internal
+ */
+const compareVersions = (a: string, b: string): number => {
+  const pa = parseVersion(a)
+  const pb = parseVersion(b)
+  const coreLen = Math.max(pa.core.length, pb.core.length)
+  for (let i = 0; i < coreLen; i++) {
+    const x = pa.core[i] ?? 0
+    const y = pb.core[i] ?? 0
+    if (x < y) return -1
+    if (x > y) return 1
+  }
+  if (pa.pre.length === 0 && pb.pre.length === 0) return 0
+  if (pa.pre.length === 0) return 1
+  if (pb.pre.length === 0) return -1
+  return comparePrerelease(pa.pre, pb.pre)
+}
+
+// Half-open windows [from, to); a null `to` is open-ended.
+const windowsOverlap = (a: GuidanceAppliesTo, b: GuidanceAppliesTo): boolean => {
+  const aTo = Option.getOrNull(a.to)
+  const bTo = Option.getOrNull(b.to)
+  const aFromBeforeBTo = bTo === null ? true : compareVersions(a.from, bTo) < 0
+  const bFromBeforeATo = aTo === null ? true : compareVersions(b.from, aTo) < 0
+  return aFromBeforeBTo && bFromBeforeATo
 }
 
 const parseAppliesTo = (raw: string): GuidanceAppliesTo | null => {
@@ -280,6 +353,7 @@ const parseAppliesTo = (raw: string): GuidanceAppliesTo | null => {
     const from = parts[0].trim()
     const to = parts[1].trim()
     if (!VERSION_RE.test(from) || !VERSION_RE.test(to)) return null
+    if (compareVersions(from, to) >= 0) return null // empty or inverted window
     return makeAppliesTo({ from, to })
   }
   return null
@@ -287,6 +361,11 @@ const parseAppliesTo = (raw: string): GuidanceAppliesTo | null => {
 
 const slug = (s: string): string =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "topic"
+
+// Non-lossy, injective path encoding for ids: `_` -> `_u`, `/` -> `_s`. Because
+// a literal `_` never survives (it becomes `_u`), `foo/bar.md` and `foo-bar.md`
+// encode to distinct strings and decoding is unambiguous.
+const encodePath = (path: string): string => path.replace(/_/g, "_u").replace(/\//g, "_s")
 
 const attributionString = (attribution: Attribution | null): string | null => {
   if (attribution === null) return null
@@ -300,14 +379,18 @@ const attributionString = (attribution: Attribution | null): string | null => {
   return parts.length > 0 ? parts.join("; ") : null
 }
 
-const buildGuidance = (
-  block: ParsedBlock,
-  manifest: PackManifest
-): { guidance: Guidance; diagnostics: Array<IngestDiagnostic> } => {
+interface BuiltRecord {
+  guidance: Guidance
+  diagnostics: Array<IngestDiagnostic>
+  conflictEligible: boolean
+}
+
+const buildGuidance = (block: ParsedBlock, manifest: PackManifest): BuiltRecord => {
   const diagnostics: Array<IngestDiagnostic> = []
   let validationStatus: GuidanceValidationStatus = "validated"
+  const hasSummary = block.summary !== null
 
-  if (block.summary === null) {
+  if (!hasSummary) {
     validationStatus = "unvalidated"
     diagnostics.push(
       makeIngestDiagnostic({
@@ -320,11 +403,13 @@ const buildGuidance = (
   }
 
   let appliesTo: GuidanceAppliesTo
+  let appliesToValid = true
   const appliesToRaw = block.metadata["applies-to"]
   if (appliesToRaw !== undefined) {
     const parsed = parseAppliesTo(appliesToRaw)
     if (parsed === null) {
       validationStatus = "unvalidated"
+      appliesToValid = false
       appliesTo = makeAppliesTo({ from: manifest.effectVersion })
       diagnostics.push(
         makeIngestDiagnostic({
@@ -341,12 +426,18 @@ const buildGuidance = (
     appliesTo = makeAppliesTo({ from: manifest.effectVersion })
   }
 
-  const ref = block.metadata["ref"] ?? Option.getOrNull(manifest.upstream.ref) ?? null
+  const refOverride = block.metadata["ref"]
+  const ref = refOverride ?? Option.getOrNull(manifest.upstream.ref) ?? null
+  // When the ref is overridden at the block level, the pack commit/sourceUrl no
+  // longer describe that specific guidance; clear them so the evidence does not
+  // claim the override at the wrong commit.
   const upstreamRef = makeUpstreamRef({
     repository: manifest.upstream.repository,
     ref,
-    commit: Option.getOrNull(manifest.upstream.commit) ?? null,
-    sourceUrl: Option.getOrNull(manifest.upstream.sourceUrl) ?? null
+    commit: refOverride !== undefined ? null : Option.getOrNull(manifest.upstream.commit) ?? null,
+    sourceUrl: refOverride !== undefined
+      ? null
+      : Option.getOrNull(manifest.upstream.sourceUrl) ?? null
   })
 
   const evidence = [
@@ -360,7 +451,7 @@ const buildGuidance = (
   ]
 
   const guidance = makeGuidance({
-    id: `${manifest.id}-${slug(block.file)}-${slug(block.topic)}-${block.line}`,
+    id: `${manifest.id}-${encodePath(block.file)}-${slug(block.topic)}-${block.line}`,
     topic: block.topic,
     summary: block.summary ?? block.topic,
     source: "upstream",
@@ -370,64 +461,43 @@ const buildGuidance = (
     upstreamRef
   })
 
-  return { guidance, diagnostics }
+  // Only a record with a real summary and a valid (non-fallback) window can
+  // meaningfully participate in conflict detection.
+  const conflictEligible = hasSummary && appliesToValid
+  return { guidance, diagnostics, conflictEligible }
 }
 
-// --- version comparison and conflict detection ------------------------------
+// --- conflict detection -----------------------------------------------------
 
-const parseVersion = (v: string): Array<number> =>
-  v.split("-")[0].split(".").map((n) => parseInt(n, 10) || 0)
-
-const compareVersions = (a: string, b: string): number => {
-  const pa = parseVersion(a)
-  const pb = parseVersion(b)
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const x = pa[i] ?? 0
-    const y = pb[i] ?? 0
-    if (x < y) return -1
-    if (x > y) return 1
-  }
-  return 0
-}
-
-// Half-open windows [from, to); a null `to` is open-ended.
-const windowsOverlap = (a: GuidanceAppliesTo, b: GuidanceAppliesTo): boolean => {
-  const aTo = Option.getOrNull(a.to)
-  const bTo = Option.getOrNull(b.to)
-  const aFromBeforeBTo = bTo === null ? true : compareVersions(a.from, bTo) < 0
-  const bFromBeforeATo = aTo === null ? true : compareVersions(b.from, aTo) < 0
-  return aFromBeforeBTo && bFromBeforeATo
-}
-
-const conflictTopics = (guidance: Array<Guidance>): Set<string> => {
+const conflictRecordIds = (
+  records: Array<BuiltRecord>
+): { ids: Set<string>; eligible: Map<string, boolean> } => {
+  const eligible = new Map<string, boolean>()
   const byTopic = new Map<string, Array<Guidance>>()
-  for (const g of guidance) {
-    const list = byTopic.get(g.topic) ?? []
-    list.push(g)
-    byTopic.set(g.topic, list)
+  for (const r of records) {
+    eligible.set(r.guidance.id, r.conflictEligible)
+    const list = byTopic.get(r.guidance.topic) ?? []
+    list.push(r.guidance)
+    byTopic.set(r.guidance.topic, list)
   }
-  const topics = new Set<string>()
-  for (const [topic, list] of byTopic) {
-    if (list.length < 2) continue
-    // Flag a conflict when any pair of blocks with different summaries has
-    // overlapping version windows. Non-overlapping windows are different
-    // guidance for different Effect versions and are not a conflict.
-    let anyOverlap = false
-    for (let i = 0; i < list.length && !anyOverlap; i++) {
+  const ids = new Set<string>()
+  for (const [, list] of byTopic) {
+    for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
         if (list[i].summary === list[j].summary) continue
+        if (!eligible.get(list[i].id) || !eligible.get(list[j].id)) continue
         const a = Option.getOrNull(list[i].appliesTo)
         const b = Option.getOrNull(list[j].appliesTo)
         if (a === null || b === null) continue
+        // Flag only the specific overlapping contradictory pair.
         if (windowsOverlap(a, b)) {
-          anyOverlap = true
-          break
+          ids.add(list[i].id)
+          ids.add(list[j].id)
         }
       }
     }
-    if (anyOverlap) topics.add(topic)
   }
-  return topics
+  return { ids, eligible }
 }
 
 const withStatus = (g: Guidance, status: GuidanceValidationStatus): Guidance =>
@@ -442,72 +512,148 @@ const withStatus = (g: Guidance, status: GuidanceValidationStatus): Guidance =>
     upstreamRef: Option.getOrNull(g.upstreamRef) ?? null
   })
 
-const applyConflicts = (
-  guidance: Array<Guidance>,
+const applyConflicts = (records: Array<BuiltRecord>): {
+  guidance: Array<Guidance>
   diagnostics: Array<IngestDiagnostic>
-): Array<Guidance> => {
-  const topics = conflictTopics(guidance)
-  if (topics.size === 0) return guidance
-  for (const topic of topics) {
-    diagnostics.push(
-      makeIngestDiagnostic({
-        file: guidance.find((g) => g.topic === topic)?.evidence[0]?.source ?? topic,
-        message: `conflicting guidance for topic: ${topic}`,
-        severity: "error",
-        topic
-      })
-    )
+} => {
+  const { ids } = conflictRecordIds(records)
+  const diagnostics: Array<IngestDiagnostic> = []
+  const guidance = records.map((r) => r.guidance)
+  if (ids.size === 0) return { guidance, diagnostics }
+  for (const g of guidance) {
+    if (ids.has(g.id)) {
+      diagnostics.push(
+        makeIngestDiagnostic({
+          file: g.evidence[0]?.source ?? g.topic,
+          message: `conflicting guidance for topic: ${g.topic}`,
+          severity: "error",
+          topic: g.topic
+        })
+      )
+    }
   }
-  return guidance.map((g) => (topics.has(g.topic) ? withStatus(g, "conflict") : g))
+  return {
+    guidance: guidance.map((g) => (ids.has(g.id) ? withStatus(g, "conflict") : g)),
+    diagnostics
+  }
+}
+
+// --- file collection and ingestion ------------------------------------------
+
+const listMarkdown = (dir: string, root: string): Array<string> => {
+  const files: Array<string> = []
+  const walk = (current: string): void => {
+    let entries: Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }>
+    try {
+      entries = readdirSync(current, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const full = join(current, entry.name)
+      if (entry.isDirectory()) {
+        walk(full)
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+        files.push(relative(root, full))
+      }
+    }
+  }
+  walk(dir)
+  return files
 }
 
 const ingestFiles = (packDir: string, manifest: PackManifest): GuidanceIngestResult => {
   const diagnostics: Array<IngestDiagnostic> = []
-  const guidance: Array<Guidance> = []
-  for (const path of manifest.includedPaths) {
-    const full = join(packDir, path)
+  const records: Array<BuiltRecord> = []
+  const packRoot = resolve(packDir)
+  const seen = new Set<string>()
+
+  for (const rawPath of manifest.includedPaths) {
+    const full = resolve(packRoot, rawPath)
+    if (full !== packRoot && !full.startsWith(packRoot + sep)) {
+      diagnostics.push(
+        makeIngestDiagnostic({
+          file: rawPath,
+          message: `included path resolves outside the pack directory: ${rawPath}`,
+          severity: "error"
+        })
+      )
+      continue
+    }
     if (!existsSync(full)) {
       diagnostics.push(
         makeIngestDiagnostic({
-          file: path,
-          message: `included file missing: ${path}`,
+          file: rawPath,
+          message: `included file missing: ${rawPath}`,
           severity: "error"
         })
       )
       continue
     }
-    let content: string
-    try {
-      content = readFileSync(full, "utf8")
-    } catch {
+    const stat = statSync(full)
+    const filePaths = stat.isDirectory() ? listMarkdown(full, packRoot) : [rawPath]
+    if (stat.isDirectory() && filePaths.length === 0) {
       diagnostics.push(
         makeIngestDiagnostic({
-          file: path,
-          message: `could not read file: ${path}`,
-          severity: "error"
-        })
-      )
-      continue
-    }
-    const blocks = parseMarkdown(path, content)
-    if (blocks.length === 0) {
-      diagnostics.push(
-        makeIngestDiagnostic({
-          file: path,
-          message: "no guidance blocks found",
+          file: rawPath,
+          message: `no markdown files found under included directory: ${rawPath}`,
           severity: "info"
         })
       )
     }
-    for (const block of blocks) {
-      const built = buildGuidance(block, manifest)
-      guidance.push(built.guidance)
-      diagnostics.push(...built.diagnostics)
+    for (const path of filePaths) {
+      if (seen.has(path)) continue
+      seen.add(path)
+      const fullFile = join(packRoot, path)
+      let content: string
+      try {
+        content = readFileSync(fullFile, "utf8")
+      } catch {
+        diagnostics.push(
+          makeIngestDiagnostic({
+            file: path,
+            message: `could not read file: ${path}`,
+            severity: "error"
+          })
+        )
+        continue
+      }
+      const parsed = parseMarkdown(path, content)
+      if (parsed.unclosedFence) {
+        diagnostics.push(
+          makeIngestDiagnostic({
+            file: path,
+            message: `unclosed code fence in file: ${path}`,
+            severity: "warning"
+          })
+        )
+      }
+      if (parsed.blocks.length === 0) {
+        diagnostics.push(
+          makeIngestDiagnostic({
+            file: path,
+            message: "no guidance blocks found",
+            severity: "info"
+          })
+        )
+      }
+      for (const block of parsed.blocks) {
+        const built = buildGuidance(block, manifest)
+        records.push(built)
+        diagnostics.push(...built.diagnostics)
+      }
     }
   }
-  const finalGuidance = applyConflicts(guidance, diagnostics)
+
+  const applied = applyConflicts(records)
+  diagnostics.push(...applied.diagnostics)
   const status: IngestStatus = diagnostics.length > 0 ? "partial" : "ok"
-  return makeGuidanceIngestResult({ pack: manifest, guidance: finalGuidance, diagnostics, status })
+  return makeGuidanceIngestResult({
+    pack: manifest,
+    guidance: applied.guidance,
+    diagnostics,
+    status
+  })
 }
 
 const readManifest = (packDir: string): PackManifest | null => {

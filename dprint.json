@@ -18,6 +18,7 @@
     "**/node_modules",
     "**/dist",
     "**/coverage",
+    "test/fixtures/ingest/unclosed-fence/**",
     "pnpm-lock.yaml"
   ],
   "plugins": [

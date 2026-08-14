@@ -521,7 +521,9 @@ Supported metadata keys:
 
 - `applies-to: <from>` or `applies-to: <from>..<to>` — version applicability
   window (`from` inclusive, `to` exclusive). Values must start with a numeric
-  semver (`\d+\.\d+\.\d+`).
+  semver (`\d+\.\d+\.\d+`). Windows are compared semver-aware (a release is
+  greater than any prerelease of the same core, so `4.0.0 > 4.0.0-rc.109`);
+  an empty or inverted window (`from >= to`) is invalid.
 - `ref: <ref>` — upstream ref override; defaults to the pack's upstream ref.
 
 Defaults when metadata is absent:
@@ -535,7 +537,10 @@ pack-relative path, `ref` = the effective upstream ref, `location` =
 `<file>:<heading line>`, `snippet` = the summary, and `attribution` = the
 pack's `attribution` (when present) joined from its license/copyright/notice.
 The record `id` includes the pack id, the pack-relative file path, the topic,
-and the heading line, so ids are unique across files.
+and the heading line, so ids are unique across files. The file path is encoded
+non-lossily (`_` → `_u`, `/` → `_s`), so `foo/bar.md` and `foo-bar.md` never
+collide. When a block overrides `ref`, the pack commit and source URL are
+cleared so the evidence does not claim the override at the wrong commit.
 
 ### Validation and conflict visibility
 
@@ -543,12 +548,20 @@ and the heading line, so ids are unique across files.
   `unvalidated` with a `warning` diagnostic. The record is still produced (the
   summary falls back to the topic; the window falls back to the pack version)
   so callers can inspect it rather than losing it.
-- Two blocks sharing a topic with different summaries are both marked
-  `conflict` with an `error` diagnostic when their version windows overlap.
-  Same-topic blocks with non-overlapping windows are different guidance for
-  different Effect versions and are not flagged. They are never silently merged.
+- Two blocks sharing a topic with different summaries are marked `conflict`
+  with an `error` diagnostic when their version windows overlap. Only the
+  specific overlapping contradictory pair is flagged; a disjoint sibling on the
+  same topic is left `validated`. Same-topic blocks with non-overlapping
+  windows are different guidance for different Effect versions and are not
+  flagged. Records with an invalid (fallback) window or no summary do not
+  participate in conflict detection. They are never silently merged.
 - A missing or unreadable included file is reported as an `error` diagnostic
   and skipped.
+- An included path that resolves outside the pack directory is rejected with
+  an `error` diagnostic.
+- An included directory is recursed for markdown files; a directory with no
+  markdown files is reported with an `info` diagnostic.
+- An unclosed code fence is reported with a `warning` diagnostic.
 - A title-only file (no level-2+ headings) produces no records and an `info`
   diagnostic.
 
@@ -556,8 +569,9 @@ and the heading line, so ids are unique across files.
 
 - This slice is read-only and local-only: it does not fetch packs, resolve
   remote refs, or run CLI commands. Remote acquisition is out of scope.
-- Version strings are validated only as a loose numeric-semver prefix; full
-  semver range semantics are not enforced.
+- Version strings are accepted by a numeric-semver prefix and compared
+  semver-aware (prerelease identifiers included); full semver range semantics
+  (e.g. `^`, `~`, `x` wildcards) are not enforced.
 - Conflict detection is a same-topic/different-summary heuristic gated on
   overlapping version windows, not semantic contradiction analysis.
 - Only the first paragraph after a heading is used as the summary; multi-line
@@ -635,7 +649,9 @@ check against this repository's real lockfile. `test/PackVerifier.test.ts`
 covers pack lookup, `metadataChanged` detection, and the `missing` / `stale` /
 `partial` / `complete` pack statuses. `test/GuidanceIngestor.test.ts` covers
 positive, malformed, conflict (including a 3-block overlapping-window case),
-version-window non-conflict, same-topic/same-summary non-conflict, heading
-hierarchy, unique-id, attribution, ref-override, missing-manifest, and
-missing-file ingestion against the committed cache fixtures and the
-`test/fixtures/ingest/` packs.
+version-window non-conflict, prerelease-aware overlap, default-rc overlap,
+invalid-window exclusion, same-topic/same-summary non-conflict, heading
+hierarchy, unique-id, path collision, path traversal, directory recursion,
+unclosed-fence, attribution, ref-override, missing-manifest, and missing-file
+ingestion against the committed cache fixtures and the `test/fixtures/ingest/`
+packs.
