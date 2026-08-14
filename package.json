@@ -1,0 +1,29 @@
+{
+  "name": "effect-lens",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "tsc -b tsconfig.json",
+    "typecheck": "tsc -b tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "oxlint",
+    "format": "dprint fmt",
+    "format:check": "dprint check",
+    "verify": "pnpm lint && pnpm format:check && pnpm check && pnpm test"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.0.0-rc.109",
+    "@types/node": "^26.1.2",
+    "dprint": "^0.55.2",
+    "effect": "4.0.0-rc.109",
+    "oxlint": "^1.76.0",
+    "typescript": "^5.9.0",
+    "vitest": "4.1.10"
+  }
+}
