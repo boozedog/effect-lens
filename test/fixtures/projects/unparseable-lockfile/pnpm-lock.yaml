@@ -1,0 +1,5 @@
+# pnpm v6-style lockfile: string dependencies, no importers section.
+lockfileVersion: 5.4
+
+dependencies:
+  effect: 4.0.0-rc.109

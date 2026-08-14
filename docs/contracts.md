@@ -278,6 +278,112 @@ Result of checking a manifest against the on-disk cache:
 `manifest`, `missingFiles: string[]`, `metadataChanged: boolean`,
 `stale: boolean`, `message: string | null`.
 
+## `Resolver` — src/Resolver.ts
+
+Resolves the project's expected Effect package identity from committed project
+metadata and verifies it against the installed package. The expected identity
+is always derived from reproducible, committed metadata; the installed package
+is used only for verification.
+
+### `LockfileKind`
+
+```json
+"package-lock" | "pnpm-lock" | "yarn-lock" | "bun-lock" | "missing"
+```
+
+`package-lock` and `pnpm-lock` are supported. `yarn-lock` and `bun-lock` are
+detected but reported as unsupported rather than guessed at.
+
+### `ResolutionStatus`
+
+```json
+"resolved" | "installed-mismatch" | "missing-lockfile" | "unsupported-lockfile" | "missing"
+```
+
+- `resolved` — expected identity derived from a supported lockfile and the
+  installed package (when present) matches.
+- `installed-mismatch` — expected identity derived, but the installed package
+  version differs (a declared-vs-installed conflict).
+- `missing-lockfile` — no usable supported lockfile (absent or unparseable);
+  expected identity came from `package.json`.
+- `unsupported-lockfile` — a lockfile exists but is not supported; expected
+  identity came from `package.json`.
+- `missing` — no `effect` dependency is declared in any committed metadata.
+
+### `Resolution`
+
+```json
+{
+  "expected": { "name": "effect", "version": "4.0.0-rc.109", "source": "lockfile", "integrity": null } | null,
+  "installed": { "name": "effect", "version": "4.0.0-rc.109", "source": "installed", "integrity": null } | null,
+  "lockfile": "pnpm-lock",
+  "status": "resolved",
+  "detail": "… | null"
+}
+```
+
+### Resolution precedence
+
+The expected identity is derived in this order:
+
+1. `package-lock.json` (npm) — preferred when present.
+2. `pnpm-lock.yaml` (pnpm) — preferred when present.
+3. `package.json` declared `effect` specifier — fallback when no supported
+   lockfile is present or the lockfile has no `effect` entry.
+
+`yarn.lock` and `bun.lock`/`bun.lockb` are detected but reported as
+`unsupported-lockfile`; Lens does not guess at their format. The installed
+package (`node_modules/effect/package.json`) is never the source of the
+expected identity — it is compared against the expected identity to surface
+`installed-mismatch`.
+
+The installed comparison is only performed when the expected identity came from
+a supported lockfile (`source: "lockfile"`). When the expected identity came
+from the `package.json` fallback (a specifier that may be a range), it is not
+compared to the installed exact version, so a range never surfaces as a false
+`installed-mismatch`. A present-but-unparseable lockfile is reported as
+`missing-lockfile` with a distinct "could not be parsed" detail.
+
+## `PackVerifier` — src/PackVerifier.ts
+
+Verifies Lens-managed reference packs against the on-disk cache and the
+project's expected Effect identity. The cache layout is
+`cacheDir/<packId>/manifest.json` plus the pack's included files under
+`cacheDir/<packId>/<includedPath>`. Verification is read-only: it never
+fetches or mutates network/cache state.
+
+### `PackVerificationResult`
+
+```json
+{
+  "resolution": { "expected": { "name": "effect", "version": "4.0.0-rc.109", "source": "lockfile", "integrity": null }, "installed": { "name": "effect", "version": "4.0.0-rc.109", "source": "installed", "integrity": null }, "lockfile": "pnpm-lock", "status": "resolved", "detail": null },
+  "pack": { "id": "pack-effect-109", "…": "…" } | null,
+  "verification": { "manifest": { "…": "…" }, "missingFiles": [], "metadataChanged": false, "stale": false, "message": null } | null,
+  "status": "complete",
+  "message": "… | null"
+}
+```
+
+`findPack` is a strict content locator: it returns only a pack whose package
+identity matches the expected identity exactly (name and version). A
+version-lagging pack is surfaced as `stale` by `verifyReferencePack`, which
+falls back to the first same-name pack when no exact match exists.
+`verifyReferencePack` maps the detailed check to a `PackStatus`:
+
+- `missing` — no pack exists for the package, or the project declares no
+  `effect` dependency.
+- `stale` — a pack exists but its pinned Effect version differs from the
+  expected identity.
+- `partial` — the pack matches but some included files are missing or the
+  on-disk metadata has changed.
+- `complete` — the pack matches and all included files are present.
+
+`verifyPack` detects `metadataChanged` by comparing a caller-supplied baseline
+manifest against the stored `manifest.json`. `verifyReferencePack` reads the
+stored manifest as its own baseline, so it cannot observe metadata drift until
+a pin/catalog baseline exists; use `verifyPack` with an external baseline for
+that check.
+
 ## `Drift` — src/Drift.ts
 
 ### `DriftKind`
@@ -338,3 +444,11 @@ Result of checking a manifest against the on-disk cache:
 issue #5 acceptance criteria: `compatible`, `stale`, `missing`, and `conflict`.
 `test/Serialization.test.ts` proves lossless JSON round-trips for `MachineOutput`,
 `PackManifest`, `Guidance`, `Rule`, and `DriftReport`.
+
+`test/Resolver.test.ts` covers identity resolution across valid pnpm/npm
+lockfiles, a missing lockfile, an installed-version mismatch, an unsupported
+lockfile (yarn and bun), an unparseable lockfile (including a range specifier
+that must not become a false conflict), a missing dependency, and a dogfood
+check against this repository's real lockfile. `test/PackVerifier.test.ts`
+covers pack lookup, `metadataChanged` detection, and the `missing` / `stale` /
+`partial` / `complete` pack statuses.

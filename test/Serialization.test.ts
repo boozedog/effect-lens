@@ -6,8 +6,10 @@ import * as ExitStatus from "../src/ExitStatus.ts"
 import * as Finding from "../src/Finding.ts"
 import * as Guidance from "../src/Guidance.ts"
 import * as PackageIdentity from "../src/PackageIdentity.ts"
+import * as PackVerifier from "../src/PackVerifier.ts"
 import * as Provenance from "../src/Provenance.ts"
 import * as ReferencePack from "../src/ReferencePack.ts"
+import * as Resolver from "../src/Resolver.ts"
 import * as Rule from "../src/Rule.ts"
 
 const effect109 = PackageIdentity.makePackageIdentity({
@@ -105,5 +107,37 @@ describe("Serialization round-trips", () => {
       generatedAt: DateTime.makeUnsafe(new Date("2026-08-14T00:00:00.000Z"))
     })
     roundTrip(Drift.DriftReport, report)
+  })
+
+  it("Resolution", () => {
+    const resolution = Resolver.makeResolution({
+      expected: effect109,
+      installed: effect109,
+      lockfile: "pnpm-lock",
+      status: "resolved"
+    })
+    roundTrip(Resolver.Resolution, resolution)
+  })
+
+  it("PackVerificationResult", () => {
+    const manifest = ReferencePack.makePackManifest({
+      id: "pack-effect-109",
+      effectVersion: "4.0.0-rc.109",
+      packageIdentity: effect109,
+      upstream,
+      includedPaths: ["LLMS.md"],
+      status: "complete"
+    })
+    const result = PackVerifier.makePackVerificationResult({
+      resolution: Resolver.makeResolution({
+        expected: effect109,
+        installed: effect109,
+        lockfile: "pnpm-lock",
+        status: "resolved"
+      }),
+      pack: manifest,
+      status: "complete"
+    })
+    roundTrip(PackVerifier.PackVerificationResult, result)
   })
 })
