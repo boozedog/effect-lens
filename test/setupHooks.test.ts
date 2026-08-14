@@ -66,7 +66,7 @@ describe("hooks status", () => {
     const result = hooks({ projectDir: project("hooks-clean"), cacheDir })
     expect(result.machineOutput.status).toBe(1)
     expect(hooksJson(result).hooks.lensStatus).toBe("absent")
-    expect(hooksJson(result).hooks.managers).toHaveLength(5)
+    expect(hooksJson(result).hooks.managers).toHaveLength(6)
     expect(hooksJson(result).hooks.managers.every((m) => m.present === false)).toBe(true)
   })
 
@@ -114,6 +114,23 @@ describe("hooks status", () => {
     expect(hooksJson(result).hooks.lensStatus).toBe("installed")
     const sgh = hooksJson(result).hooks.managers.find((m) => m.manager === "simple-git-hooks")
     expect(sgh?.lensStatus).toBe("installed")
+  })
+
+  it("reports hk with an effect-lens step as installed", () => {
+    const result = hooks({ projectDir: project("hooks-hk-installed"), cacheDir })
+    expect(result.machineOutput.status).toBe(0)
+    expect(hooksJson(result).hooks.lensStatus).toBe("installed")
+    const hk = hooksJson(result).hooks.managers.find((m) => m.manager === "hk")
+    expect(hk?.present).toBe(true)
+    expect(hk?.lensStatus).toBe("installed")
+  })
+
+  it("reports an hk config without effect-lens as absent", () => {
+    const result = hooks({ projectDir: project("hooks-hk-absent"), cacheDir })
+    expect(hooksJson(result).hooks.lensStatus).toBe("absent")
+    const hk = hooksJson(result).hooks.managers.find((m) => m.manager === "hk")
+    expect(hk?.present).toBe(true)
+    expect(hk?.lensStatus).toBe("absent")
   })
 
   it("reports an unreadable hook config as ambiguous", () => {
@@ -165,6 +182,7 @@ describe("hooks status", () => {
     expect(json.machineOutput.status).toBe(0)
     expect(json.hooks.lensStatus).toBe("installed")
     expect(json.hooks.managers.map((m) => m.manager)).toEqual([
+      "hk",
       "husky",
       "lefthook",
       "pre-commit",

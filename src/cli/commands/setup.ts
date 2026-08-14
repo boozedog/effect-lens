@@ -1,19 +1,22 @@
 /**
- * `effect-lens setup --dry-run`: build a reviewable, ordered setup plan with
- * no mutations.
+ * `effect-lens setup --dry-run` and `effect-lens setup --apply`.
  *
- * The command is a thin adapter over the shared-core `buildSetupPlan`
- * operation. It inspects the project's package manager, Effect dependency,
+ * `--dry-run` is a thin adapter over the shared-core `buildSetupPlan`
+ * operation: it inspects the project's package manager, Effect dependency,
  * reference-pack state, oxlint/Lens configuration, and hook-manager state, and
- * returns an ordered plan. It is strictly read-only: it never writes config,
- * dependencies, packs, or hooks. Actual setup mutation is a deferred follow-up
- * and is rejected by the CLI dispatch until implemented.
+ * returns an ordered plan. It is strictly read-only.
+ *
+ * `--apply` is the explicit mutation mode. It is a thin adapter over the
+ * shared-core `applySetupPlan` operation, which applies only the actionable,
+ * unambiguous hooks step and reports every plan step. It requires `--apply`;
+ * plain `setup` never mutates.
  *
  * @since 0.0.0
  */
 import * as Option from "effect/Option"
 import { aggregateStatus, MachineOutput, makeMachineOutput } from "../../ExitStatus.ts"
 import * as Setup from "../../operations/setup.ts"
+import * as SetupApply from "../../operations/setupApply.ts"
 import { encode } from "../encode.ts"
 import type { CliContext, CliResult } from "../types.ts"
 
@@ -72,5 +75,65 @@ const buildHuman = (plan: Setup.SetupPlan): Array<string> => {
     }
   }
   lines.push("note: dry-run only; no files were changed")
+  return lines
+}
+
+/**
+ * Runs the mutating `setup --apply` command.
+ *
+ * @since 0.0.0
+ */
+export const setupApply = (context: CliContext): CliResult => {
+  const result = SetupApply.applySetupPlan({
+    projectDir: context.projectDir,
+    cacheDir: context.cacheDir
+  })
+  const machineOutput = makeMachineOutput({
+    status: aggregateStatus({ findings: [], diagnostics: result.diagnostics }),
+    diagnostics: [...result.diagnostics]
+  })
+  return {
+    machineOutput,
+    json: {
+      machineOutput: encode(MachineOutput, machineOutput),
+      apply: encode(SetupApply.SetupApplyResult, result)
+    },
+    human: buildApplyHuman(result)
+  }
+}
+
+/**
+ * Builds the concise human-readable `setup --apply` report.
+ *
+ * @since 0.0.0
+ */
+const buildApplyHuman = (result: SetupApply.SetupApplyResult): Array<string> => {
+  const lines: Array<string> = ["effect-lens setup --apply"]
+  lines.push(`project: ${result.project}`)
+  if (!result.precondition) {
+    lines.push("refused: plan is not actionable; no files were changed")
+  }
+  lines.push("steps:")
+  for (const step of result.steps) {
+    const detail = Option.getOrNull(step.detail)
+    lines.push(
+      `  - [${step.outcome}] ${step.id}: ${step.title}` +
+        (detail === null ? "" : ` — ${detail}`)
+    )
+  }
+  const mutation = Option.getOrNull(result.hookMutation)
+  if (mutation !== null) {
+    lines.push(
+      `hooks: ${mutation.outcome}` +
+        (mutation.changed ? " (changed)" : "") +
+        (mutation.created ? " (created)" : "")
+    )
+  }
+  if (result.diagnostics.length > 0) {
+    lines.push("diagnostics:")
+    for (const d of result.diagnostics) {
+      lines.push(`  - [${d.severity}] ${d.message}`)
+    }
+  }
   return lines
 }

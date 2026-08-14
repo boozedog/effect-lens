@@ -1,6 +1,6 @@
 # Effect Lens CLI
 
-The `effect-lens` CLI is a thin, read-only adapter over the shared core
+The `effect-lens` CLI is a thin adapter over the shared core
 operations. It exposes five commands — `doctor`, `drift`, `check`, `setup`, and
 `hooks` — that
 inspect a project's Effect tooling and report findings and diagnostics with
@@ -102,10 +102,22 @@ configuration, and hook-manager state, and returns an ordered list of steps.
 effect-lens setup --dry-run --project . --cache ~/.cache/effect-lens --json
 ```
 
-`setup` requires `--dry-run`; running `setup` without it exits `2` because
-actual setup mutation is not yet implemented. The plan format, read-only
-guarantee, and supported hook managers are documented in
-[`docs/setup.md`](setup.md).
+`setup` requires an explicit mode: `--dry-run` (read-only) or `--apply`
+(mutating). Running plain `setup` exits `2` with a message asking for one of
+them. The plan format, read-only guarantee, and supported hook managers are
+documented in [`docs/setup.md`](setup.md).
+
+### `effect-lens setup --apply`
+
+Applies the actionable setup plan explicitly. In this slice it applies only the
+`hooks` step (installing the `effect-lens` check into the `hk` manager) and
+reports every plan step as `applied` / `ok` / `deferred` / `refused` /
+`skipped`. It refuses (writing nothing) when the plan contains an `unsupported`
+step or the hooks target cannot be resolved. See [`docs/setup.md`](setup.md).
+
+```sh
+effect-lens setup --apply --project . --cache ~/.cache/effect-lens --json
+```
 
 ### `effect-lens hooks status`
 
@@ -116,13 +128,24 @@ installed, absent, or ambiguous.
 effect-lens hooks status --project . --cache ~/.cache/effect-lens --json
 ```
 
-`hooks` requires the `status` subcommand; `hooks install` and `hooks uninstall`
-are deferred. The supported hook managers and detection rules are documented in
+The supported hook managers and detection rules are documented in
 [`docs/setup.md`](setup.md).
 
-## Offline and read-only behavior
+### `effect-lens hooks install|uninstall`
 
-All five commands are strictly read-only:
+Explicitly add or remove the Lens-owned `effect-lens` step in the `hk`
+`pre-commit` hook. They are idempotent and refuse ambiguous or unsupported
+configs without writing. See [`docs/setup.md`](setup.md).
+
+```sh
+effect-lens hooks install --project . --json
+effect-lens hooks uninstall --project . --json
+```
+
+## Offline, read-only, and mutation behavior
+
+`doctor`, `drift`, `check`, `setup --dry-run`, and `hooks status` are strictly
+read-only:
 
 - They never fetch reference packs or any network resource.
 - They never mutate caches, lockfiles, `package.json`, or any project
@@ -131,6 +154,9 @@ All five commands are strictly read-only:
   it afterwards; it never writes into the project.
 - `setup --dry-run` and `hooks status` never write hook files, oxlint config,
   dependencies, or packs.
+
+`setup --apply` and `hooks install|uninstall` are the explicit mutation
+surfaces. They require an explicit command/flag and never mutate implicitly.
 
 ## Current limitations
 
@@ -141,8 +167,9 @@ All five commands are strictly read-only:
 - `check` runs the Lens strict rules and the standard correctness/suspicious
   categories. It does not yet run the full `lookup`/`design`/state-pressure
   analysis surfaces.
-- `setup` mutation and `hooks install|uninstall` (from issue #9) are not yet
-  implemented; `setup --dry-run` and `hooks status` are read-only by design.
+- `setup --apply` and `hooks install|uninstall` mutate only the `hk` hook
+  manager (`hk.pkl`); creating a `hk.pkl` from scratch (run `hk init` first)
+  and mutating the other hook managers are out of scope for this slice.
 - The CLI requires Node's native type stripping (Node 23.6+, or 22.6+ with
   `--experimental-strip-types`).
 

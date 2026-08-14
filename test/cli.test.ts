@@ -142,10 +142,22 @@ describe("CLI check", () => {
 })
 
 describe("CLI setup", () => {
-  it("exits 2 when setup is run without --dry-run (mutation deferred)", () => {
+  it("exits 2 when setup is run without an explicit mode", () => {
     const { stderr, status } = runCli(["setup", "--project", project("npm-valid")])
     expect(status).toBe(2)
-    expect(stderr).toContain("setup mutation is not yet implemented")
+    expect(stderr).toContain("setup requires an explicit mode")
+  })
+
+  it("exits 2 when setup is run with both --dry-run and --apply", () => {
+    const { stderr, status } = runCli([
+      "setup",
+      "--dry-run",
+      "--apply",
+      "--project",
+      project("npm-valid")
+    ])
+    expect(status).toBe(2)
+    expect(stderr).toContain("mutually exclusive")
   })
 
   it("exits 1 for a project needing setup and emits a plan in JSON mode", () => {
@@ -188,16 +200,26 @@ describe("CLI hooks", () => {
     expect(stderr).toContain("unknown hooks subcommand")
   })
 
-  it("exits 2 for hooks install (mutation deferred)", () => {
-    const { stderr, status } = runCli(["hooks", "install", "--project", project("npm-valid")])
+  it("exits 2 for hooks install when no hk config is detected", () => {
+    const { stdout, status } = runCli([
+      "hooks",
+      "install",
+      "--project",
+      project("npm-valid")
+    ])
     expect(status).toBe(2)
-    expect(stderr).toContain("hooks install is not yet implemented")
+    expect(stdout).toContain("no hk.pkl found")
   })
 
-  it("exits 2 for hooks uninstall (mutation deferred)", () => {
-    const { stderr, status } = runCli(["hooks", "uninstall", "--project", project("npm-valid")])
-    expect(status).toBe(2)
-    expect(stderr).toContain("hooks uninstall is not yet implemented")
+  it("exits 0 for hooks uninstall when nothing is installed (idempotent)", () => {
+    const { stdout, status } = runCli([
+      "hooks",
+      "uninstall",
+      "--project",
+      project("npm-valid")
+    ])
+    expect(status).toBe(0)
+    expect(stdout).toContain("no hk.pkl config; nothing is installed")
   })
 
   it("exits 0 for a project with lens hooks installed", () => {

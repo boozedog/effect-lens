@@ -1,0 +1,16 @@
+amends "package://github.com/jdx/hk/releases/download/v1.55.0/hk@1.55.0#/Config.pkl"
+
+hooks {
+  ["pre-commit"] {
+    steps {
+      ["lint"] {
+        check = "pnpm lint"
+      }
+      // === effect-lens:start ===
+      ["effect-lens"] {
+        check = "effect-lens check"
+      }
+      // === effect-lens:end ===
+    }
+  }
+}

@@ -331,6 +331,63 @@ const packageJsonFieldStatus = (
 }
 
 /**
+ * The hk config file names hk searches, in precedence order (first match
+ * wins). `hk.local.pkl` is local-only and should not be committed; `hk.pkl` is
+ * the standard project config.
+ *
+ * @since 0.0.0
+ */
+const HK_CONFIG_NAMES = [
+  "hk.local.pkl",
+  ".config/hk.local.pkl",
+  "hk.pkl",
+  ".config/hk.pkl"
+]
+
+/**
+ * Inspects the `hk` hook manager.
+ *
+ * hk is detected by a `hk.pkl` config (or one of hk's other config paths). A
+ * present, readable config that references `effect-lens` is `installed`; a
+ * readable config that does not is `absent`; an unreadable config is
+ * `ambiguous`.
+ *
+ * @since 0.0.0
+ */
+const hkStatus = (projectDir: string): HookManagerStatus => {
+  const relName = HK_CONFIG_NAMES.find((name) => existsSync(join(projectDir, name))) ?? null
+  if (relName === null) {
+    return makeHookManagerStatus({
+      manager: "hk",
+      present: false,
+      configPath: null,
+      lensStatus: "absent",
+      detail: "hk not detected"
+    })
+  }
+  const content = readText(join(projectDir, relName))
+  if (content === null) {
+    return makeHookManagerStatus({
+      manager: "hk",
+      present: true,
+      configPath: relName,
+      lensStatus: "ambiguous",
+      detail: "hk config present but unreadable"
+    })
+  }
+  const installed = content.includes("effect-lens")
+  return makeHookManagerStatus({
+    manager: "hk",
+    present: true,
+    configPath: relName,
+    lensStatus: installed ? "installed" : "absent",
+    detail: installed
+      ? "hk config references effect-lens"
+      : "hk config does not reference effect-lens"
+  })
+}
+
+/**
  * Builds the aggregate {@link HooksStatus} for a project.
  *
  * `lensStatus` is `installed` when any manager has an `effect-lens` check,
@@ -344,6 +401,7 @@ const packageJsonFieldStatus = (
  */
 export const hooksStatus = (projectDir: string): HooksStatus => {
   const managers: Array<HookManagerStatus> = [
+    hkStatus(projectDir),
     huskyStatus(projectDir),
     yamlFileStatus(projectDir, "lefthook", ["lefthook.yml", "lefthook.yaml"]),
     yamlFileStatus(projectDir, "pre-commit", [

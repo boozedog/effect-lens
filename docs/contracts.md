@@ -893,7 +893,7 @@ a present config cannot be read, so the state cannot be determined.
 
 ```json
 {
-  "manager": "husky | lefthook | pre-commit | lint-staged | simple-git-hooks",
+  "manager": "hk | husky | lefthook | pre-commit | lint-staged | simple-git-hooks",
   "present": true,
   "configPath": ".husky/pre-commit | null",
   "lensStatus": "installed | absent | ambiguous",
@@ -913,6 +913,82 @@ a present config cannot be read, so the state cannot be determined.
 
 `lensStatus` is `installed` when any manager is installed, `ambiguous` when any
 manager is ambiguous and none is installed, and `absent` otherwise.
+
+## `HookMutation` — src/HookMutation.ts
+
+The result model for the explicit `hooks install|uninstall` mutations (also
+embedded in `SetupApplyResult`).
+
+### `HookOperation`
+
+```json
+"install" | "uninstall"
+```
+
+### `HookMutationOutcome`
+
+```json
+"applied" | "noop" | "refused"
+```
+
+`applied` — the target was written or removed. `noop` — the requested state
+already held; nothing was written. `refused` — the mutation was not performed
+because the target was ambiguous or unsupported; nothing was written (never a
+partial write).
+
+### `HookMutationResult`
+
+```json
+{
+  "operation": "install | uninstall",
+  "manager": "hk | null",
+  "targetPath": "hk.pkl | null",
+  "outcome": "applied | noop | refused",
+  "changed": true,
+  "created": false,
+  "detail": "… | null",
+  "diagnostics": []
+}
+```
+
+## `SetupApply` — src/SetupApply.ts
+
+The result model for the explicit `setup --apply` mutation.
+
+### `SetupApplyStepOutcome`
+
+```json
+"applied" | "ok" | "deferred" | "refused" | "skipped"
+```
+
+### `SetupApplyStep`
+
+```json
+{
+  "id": "hooks",
+  "title": "Install Lens hook checks",
+  "status": "ok | needed | unsupported | skip",
+  "outcome": "applied | ok | deferred | refused | skipped",
+  "detail": "… | null"
+}
+```
+
+### `SetupApplyResult`
+
+```json
+{
+  "project": "/abs/path",
+  "precondition": true,
+  "steps": [],
+  "hookMutation": { "…": "…" } | null,
+  "diagnostics": []
+}
+```
+
+`precondition` is `false` when the apply refused before any mutation because the
+plan was not actionable. `hookMutation` reuses `HookMutationResult` for the
+`hooks` step when it was attempted. `setup --apply` applies only the actionable
+`hooks` step and reports every step; see [`docs/setup.md`](setup.md).
 
 ## `Setup` — src/Setup.ts
 

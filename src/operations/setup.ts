@@ -6,7 +6,8 @@
  * reference-pack state, oxlint/Lens configuration, and hook-manager state, and
  * returns an ordered list of steps. Each step is `ok`, `needed`, `unsupported`,
  * or `skip`. The operation never writes config, dependencies, packs, or hooks;
- * actual setup mutation is a deferred follow-up.
+ * the mutating counterpart is `applySetupPlan` in `setupApply.ts` (used by
+ * `setup --apply`).
  *
  * @since 0.0.0
  */

@@ -1,20 +1,24 @@
 /**
- * Read-only core operations: `lookup`, `review`, `design`, `statePressure`,
- * `drift`, `doctor`, `setup`, and `hooks`.
+ * Core operations: `lookup`, `review`, `design`, `statePressure`, `drift`,
+ * `doctor`, `setup`, `setupApply`, `hooks`, and `hookMutation`.
  *
  * These are the adapter-independent operations that CLI, pi, and future MCP
  * adapters consume. They centralize policy and analysis logic so no surface
- * adapter duplicates it. All operations are read-only and produce
- * JSON-serializable Schema-backed results.
+ * adapter duplicates it. `setup`, `setupApply`, `hooks`, and `hookMutation`
+ * share the setup and hook-manager contracts; `setupApply` and `hookMutation`
+ * are the explicit mutation surfaces while the rest are read-only. All results
+ * are JSON-serializable and Schema-backed.
  *
  * @since 0.0.0
  */
 export * as Design from "./design.ts"
 export * as Doctor from "./doctor.ts"
 export * as Drift from "./drift.ts"
+export * as HookMutation from "./hookMutation.ts"
 export * as Hooks from "./hooks.ts"
 export * as Lookup from "./lookup.ts"
 export * as Review from "./review.ts"
 export * as Setup from "./setup.ts"
+export * as SetupApply from "./setupApply.ts"
 export * as Shared from "./shared.ts"
 export * as StatePressure from "./statePressure.ts"

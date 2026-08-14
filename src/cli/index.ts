@@ -2,11 +2,13 @@
 /**
  * Effect Lens CLI entrypoint.
  *
- * A thin, read-only adapter over the shared core operations. It parses
+ * A thin adapter over the shared core operations. It parses
  * arguments with Node's standard library, dispatches to the `doctor`, `drift`,
- * `check`, `setup`, and `hooks` commands, renders human or JSON output, and sets the process
- * exit code from the resulting {@link MachineOutput} (0 ok, 1 warning,
- * 2 error). It never re-implements policy and never mutates the project.
+ * `check`, `setup`, and `hooks` commands, renders human or JSON output, and
+ * sets the process exit code from the resulting {@link MachineOutput}
+ * (0 ok, 1 warning, 2 error). It never re-implements policy; `setup --apply`
+ * and `hooks install|uninstall` are the only explicit mutation paths; every
+ * other command is read-only.
  *
  * @since 0.0.0
  */
@@ -17,8 +19,8 @@ import { Exit } from "../ExitStatus.ts"
 import { check } from "./commands/check.ts"
 import { doctor } from "./commands/doctor.ts"
 import { drift } from "./commands/drift.ts"
-import { hooks } from "./commands/hooks.ts"
-import { setup } from "./commands/setup.ts"
+import { hooks, hooksInstall, hooksUninstall } from "./commands/hooks.ts"
+import { setup, setupApply } from "./commands/setup.ts"
 import { render } from "./output.ts"
 import type { CliResult } from "./types.ts"
 import { VERSION } from "./version.ts"
@@ -30,15 +32,16 @@ Commands:
   doctor   Report Effect resolution, installed mismatch, and reference-pack status.
   drift    Emit a local drift report over the Effect dependency and reference pack.
   check    Run the local read-only review path and aggregate findings.
-  setup    Build a read-only setup plan (requires --dry-run; mutation is deferred).
-  hooks    Report hook-manager status (subcommand: status).
+  setup    Build a setup plan (requires --dry-run or --apply).
+  hooks    Manage hook-manager checks (subcommand: status, install, uninstall).
 
 Options:
   -p, --project <dir>   Project directory (default: current directory)
   -c, --cache <dir>     Reference-pack cache directory
   -j, --json            Emit machine-readable JSON output
       --path <path>     File or directory to lint (check only; relative to --project)
-      --dry-run         Build a setup plan without mutating anything (setup only)
+      --dry-run         Build a read-only setup plan (setup only)
+      --apply           Apply the actionable setup plan (setup only; mutates)
   -h, --help            Show this help
   -v, --version         Show the version
 `
@@ -65,6 +68,7 @@ const main = (): void => {
     json?: boolean
     path?: string
     "dry-run"?: boolean
+    apply?: boolean
     help?: boolean
     version?: boolean
   }
@@ -82,6 +86,7 @@ const main = (): void => {
         json: { type: "boolean", short: "j" },
         path: { type: "string" },
         "dry-run": { type: "boolean" },
+        apply: { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" }
       },
@@ -130,31 +135,40 @@ const main = (): void => {
         : check({ projectDir, cacheDir, path: values.path })
       break
     case "setup":
-      if (values["dry-run"] !== true) {
+      if (values["dry-run"] === true && values.apply === true) {
         process.stderr.write(
-          `error: setup mutation is not yet implemented; use --dry-run\n\n${USAGE}`
+          `error: --apply and --dry-run are mutually exclusive\n\n${USAGE}`
         )
         process.exitCode = Exit.Error
         return
       }
-      result = setup({ projectDir, cacheDir })
+      if (values["dry-run"] === true) {
+        result = setup({ projectDir, cacheDir })
+      } else if (values.apply === true) {
+        result = setupApply({ projectDir, cacheDir })
+      } else {
+        process.stderr.write(
+          `error: setup requires an explicit mode: --dry-run (read-only) or ` +
+            `--apply (mutating)\n\n${USAGE}`
+        )
+        process.exitCode = Exit.Error
+        return
+      }
       break
     case "hooks":
-      if (positionals[1] === "install" || positionals[1] === "uninstall") {
-        process.stderr.write(
-          `error: hooks ${positionals[1]} is not yet implemented; use hooks status\n\n${USAGE}`
-        )
-        process.exitCode = Exit.Error
-        return
-      }
-      if (positionals[1] !== "status") {
+      if (positionals[1] === "install") {
+        result = hooksInstall({ projectDir, cacheDir })
+      } else if (positionals[1] === "uninstall") {
+        result = hooksUninstall({ projectDir, cacheDir })
+      } else if (positionals[1] === "status") {
+        result = hooks({ projectDir, cacheDir })
+      } else {
         process.stderr.write(
           `error: unknown hooks subcommand: ${positionals[1] ?? "(none)"}\n\n${USAGE}`
         )
         process.exitCode = Exit.Error
         return
       }
-      result = hooks({ projectDir, cacheDir })
       break
     default:
       process.stderr.write(`error: unknown command: ${command}\n\n${USAGE}`)

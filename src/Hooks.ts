@@ -22,6 +22,7 @@ import { Diagnostic } from "./Finding.ts"
  * @since 0.0.0
  */
 export const HookManagerName = Schema.Literals([
+  "hk",
   "husky",
   "lefthook",
   "pre-commit",

@@ -6,6 +6,7 @@ import * as ExitStatus from "../src/ExitStatus.ts"
 import * as Finding from "../src/Finding.ts"
 import * as Guidance from "../src/Guidance.ts"
 import * as GuidanceIngestor from "../src/GuidanceIngestor.ts"
+import * as HookMutation from "../src/HookMutation.ts"
 import * as Hooks from "../src/Hooks.ts"
 import * as PackageIdentity from "../src/PackageIdentity.ts"
 import * as PackVerifier from "../src/PackVerifier.ts"
@@ -14,6 +15,7 @@ import * as ReferencePack from "../src/ReferencePack.ts"
 import * as Resolver from "../src/Resolver.ts"
 import * as Rule from "../src/Rule.ts"
 import * as Setup from "../src/Setup.ts"
+import * as SetupApply from "../src/SetupApply.ts"
 
 const effect109 = PackageIdentity.makePackageIdentity({
   name: "effect",
@@ -244,5 +246,42 @@ describe("Serialization round-trips", () => {
       diagnostics: []
     })
     roundTrip(Setup.SetupPlan, plan)
+  })
+
+  it("HookMutationResult", () => {
+    const result = HookMutation.makeHookMutationResult({
+      operation: "install",
+      manager: "hk",
+      targetPath: "hk.pkl",
+      outcome: "applied",
+      changed: true,
+      created: false,
+      detail: "added effect-lens check step to hk.pkl"
+    })
+    roundTrip(HookMutation.HookMutationResult, result)
+  })
+
+  it("SetupApplyResult", () => {
+    const result = SetupApply.makeSetupApplyResult({
+      project: "/abs/path",
+      precondition: true,
+      steps: [
+        SetupApply.makeSetupApplyStep({
+          id: "hooks",
+          title: "Install Lens hook checks",
+          status: "needed",
+          outcome: "applied"
+        })
+      ],
+      hookMutation: HookMutation.makeHookMutationResult({
+        operation: "install",
+        manager: "hk",
+        targetPath: "hk.pkl",
+        outcome: "applied",
+        changed: true
+      }),
+      diagnostics: []
+    })
+    roundTrip(SetupApply.SetupApplyResult, result)
   })
 })
