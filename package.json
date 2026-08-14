@@ -1,15 +1,19 @@
 {
   "name": "effect-lens",
   "version": "0.0.0",
+  "bin": {
+    "effect-lens": "./bin/effect-lens.mjs"
+  },
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.20.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.6"
   },
   "scripts": {
     "check": "tsc -b tsconfig.json",
     "typecheck": "tsc -b tsconfig.json",
+    "cli": "node --experimental-strip-types src/cli/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "oxlint",

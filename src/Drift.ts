@@ -22,11 +22,22 @@ export const DriftKind = Schema.Literals(["compatible", "stale", "missing", "con
 export type DriftKind = Schema.Schema.Type<typeof DriftKind>
 
 /**
+ * What a drift entry observes: the declared/installed Effect dependency or the
+ * available reference pack. Kept distinct so a dependency and a pack with the
+ * same kind and package name are not conflated.
+ *
+ * @since 0.0.0
+ */
+export const DriftRole = Schema.Literals(["dependency", "pack"])
+export type DriftRole = Schema.Schema.Type<typeof DriftRole>
+
+/**
  * A single drift observation.
  *
  * @since 0.0.0
  */
 export class DriftEntry extends Schema.Class<DriftEntry>("DriftEntry")({
+  role: DriftRole,
   packageIdentity: PackageIdentity,
   expected: Schema.OptionFromNullOr(UpstreamRef),
   actual: Schema.OptionFromNullOr(UpstreamRef),
@@ -63,6 +74,7 @@ export class DriftReport extends Schema.Class<DriftReport>("DriftReport")({
  * @since 0.0.0
  */
 export const makeDriftEntry = (args: {
+  role: DriftRole
   packageIdentity: PackageIdentity
   kind: DriftKind
   expected?: UpstreamRef | null
@@ -70,6 +82,7 @@ export const makeDriftEntry = (args: {
   detail?: string | null
 }): DriftEntry =>
   new DriftEntry({
+    role: args.role,
     packageIdentity: args.packageIdentity,
     expected: Option.fromNullishOr(args.expected),
     actual: Option.fromNullishOr(args.actual),

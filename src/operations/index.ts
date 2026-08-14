@@ -1,6 +1,6 @@
 /**
- * Read-only core operations: `lookup`, `review`, `design`, and
- * `statePressure`.
+ * Read-only core operations: `lookup`, `review`, `design`, `statePressure`,
+ * `drift`, and `doctor`.
  *
  * These are the adapter-independent operations that CLI, pi, and future MCP
  * adapters consume. They centralize policy and analysis logic so no surface
@@ -10,6 +10,8 @@
  * @since 0.0.0
  */
 export * as Design from "./design.ts"
+export * as Doctor from "./doctor.ts"
+export * as Drift from "./drift.ts"
 export * as Lookup from "./lookup.ts"
 export * as Review from "./review.ts"
 export * as Shared from "./shared.ts"

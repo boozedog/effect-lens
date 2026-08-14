@@ -20,6 +20,7 @@ const upstream109 = Provenance.makeUpstreamRef({
 describe("Reference data", () => {
   it("reports compatible data when installed, declared, and referenced agree", () => {
     const entry = Drift.makeDriftEntry({
+      role: "dependency",
       packageIdentity: effect109,
       kind: "compatible",
       expected: upstream109,
@@ -89,6 +90,7 @@ describe("Reference data", () => {
     const kinds = ["compatible", "stale", "missing", "conflict"]
     for (const kind of kinds) {
       const entry = Drift.makeDriftEntry({
+        role: "dependency",
         packageIdentity: effect109,
         kind: kind as Drift.DriftKind
       })

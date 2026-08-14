@@ -791,6 +791,30 @@ concerns the workflow, not an Effect version window. It is surfaced by
 prepending (it is the primary recommendation), not by the version-ranked
 confidence sort, and it is `lens-advisory` — never a strict `lens-strict` rule.
 
+### `drift` — src/operations/drift.ts
+
+Builds a local {@link DriftReport} from the project's resolved Effect identity
+and reference-pack verification. It maps each `ResolutionStatus` and
+`PackStatus` to a `DriftKind` and records the local toolchain manifest. This is
+the offline slice of drift detection: it reports the relationship between the
+declared/installed Effect dependency and the available reference pack, but it
+does not compare against live upstream tooling (the CLI surfaces that
+limitation explicitly).
+
+`buildDriftReport({ projectDir, cacheDir, lensVersion })` returns a
+`DriftReport`. Each `DriftEntry` carries a `role` (`"dependency"` or `"pack"`)
+so a dependency and a pack with the same kind and package name are not
+conflated.
+
+### `doctor` — src/operations/doctor.ts
+
+Centralizes the error-vs-warning policy for the `doctor` surface.
+`doctorDiagnostics({ projectDir, cacheDir })` resolves the Effect identity and
+verifies the reference pack, then returns the resolution, the pack
+verification, and the diagnostics that drive the exit code. A missing Effect
+dependency is a blocking `error`; installed-mismatch, lockfile, and
+reference-pack problems are advisory `warning`s.
+
 ### Operation limitations
 
 - All operations are pure and read-only: they never mutate packs, guidance, or
@@ -800,6 +824,8 @@ confidence sort, and it is `lens-advisory` — never a strict `lens-strict` rule
   must not be presented as certainty.
 - `review` maps only the initial Lens strict rule set; other oxlint diagnostics
   are surfaced as non-rule diagnostics rather than coerced into findings.
+- `drift` is a local, offline slice; it does not compare against live upstream
+  tooling.
 
 ## `Drift` — src/Drift.ts
 
@@ -829,6 +855,7 @@ confidence sort, and it is `lens-advisory` — never a strict `lens-strict` rule
 
 ```json
 {
+  "role": "dependency | pack",
   "packageIdentity": { "name": "effect", "version": "4.0.0-rc.109", "source": "lockfile", "integrity": null },
   "expected": { "repository": "…", "ref": null, "commit": null, "sourceUrl": null } | null,
   "actual": { "repository": "…", "ref": null, "commit": null, "sourceUrl": null } | null,

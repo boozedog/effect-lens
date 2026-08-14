@@ -45,7 +45,9 @@ describe("True JSON round-trips", () => {
     })
     const report = Drift.makeDriftReport({
       toolchain: Drift.makeToolchainManifest({ lensVersion: "0.0.0", effect }),
-      entries: [Drift.makeDriftEntry({ packageIdentity: effect, kind: "compatible" })],
+      entries: [
+        Drift.makeDriftEntry({ role: "dependency", packageIdentity: effect, kind: "compatible" })
+      ],
       generatedAt: expiry
     })
     const decoded = jsonRoundTrip(Drift.DriftReport, report)

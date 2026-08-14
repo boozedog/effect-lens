@@ -99,6 +99,7 @@ describe("Serialization round-trips", () => {
       }),
       entries: [
         Drift.makeDriftEntry({
+          role: "dependency",
           packageIdentity: effect109,
           kind: "compatible",
           expected: upstream,
