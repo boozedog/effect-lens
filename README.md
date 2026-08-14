@@ -18,3 +18,22 @@ The CLI, pi extension, and future MCP adapter share one set of core data
 contracts — project/dependency identity, reference packs, guidance/evidence,
 rules/findings, and drift reports. See `docs/contracts.md` for the type and
 serialization definitions.
+
+## Strict rule layer
+
+Lens ships a strict Effect-first AST rule layer on top of upstream Oxlint
+tooling. The rules live in `src/rules/` (the Lens rule catalog) and
+`src/plugin/` (the oxlint plugin, loaded via `jsPlugins` in `.oxlintrc.json`).
+
+The initial rules are all `lens-strict` footgun rules:
+
+- `lens/no-async-function` — bans `async` functions.
+- `lens/no-await-expression` — bans `await`, except the narrow bind-aware
+  `Effect.runPromise` bridge.
+- `lens/no-new-promise` — bans manual `Promise` construction, including
+  aliased constructors.
+
+Rules use AST and binding information (never text matching) and are
+bind-aware: aliases and shadowing are caught where the oxlint scope API
+supports it. See `docs/contracts.md` for the rule catalog, plugin, and
+evidence/provenance mapping.

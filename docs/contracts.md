@@ -10,6 +10,57 @@ Serialization is JSON. Each `Schema.Class` encodes to a plain JSON object with
 Optional fields are modelled with `Schema.OptionFromNullOr` and serialize to
 `null` when absent and to their value when present.
 
+## Rule catalog and oxlint plugin
+
+The strict rule layer lives in two places that MUST stay in sync:
+
+- **`src/rules/`** — the Lens rule catalog. Each entry is a `Rule` value whose
+  `id` is the stable identifier (`lens/no-async-function`,
+  `lens/no-await-expression`, `lens/no-new-promise`) used by CLI, pi, and Git
+  gates. All three initial rules are `lens-strict` kind: they are Lens
+  strict-policy footgun rules, not upstream Effect rules, and their evidence
+  documents the footgun and the Effect alternative rather than claiming a
+  universal upstream ban.
+- **`src/plugin/`** — the oxlint plugin. It is loaded by oxlint via the
+  `jsPlugins` entry in `.oxlintrc.json` and exposes the same rules under the
+  `lens` plugin name. The rules use AST and binding information (never text
+  matching) and are bind-aware: aliases and shadowing are caught where the
+  oxlint scope API supports it.
+
+The plugin is written against `@oxlint/plugins` — the same API the upstream
+`@effect/oxc` package uses. `@effect/oxc` itself is `private` (not published),
+so Lens references its conventions rather than depending on it. The
+`effect-oxlint` third-party wrapper is avoided because it is built against an
+older Effect prerelease.
+
+### Rule IDs and oxlint codes
+
+The Lens rule id uses a slash (`lens/no-async-function`). The oxlint JSON
+diagnostic `code` uses the `plugin(rule)` form (`lens(no-async-function)`).
+`toRuleId` in `src/plugin/toFinding.ts` converts between them, and `toFinding`
+maps an oxlint diagnostic to a Lens `Finding` (rule id, severity, source kind,
+location, and catalog evidence). Non-Lens diagnostics are never coerced into
+Lens findings.
+
+### Narrow interop bridge
+
+`lens/no-await-expression` allows only one narrow, explicit, bind-aware bridge:
+`await <effectImport>.runPromise(...)` where the receiver resolves to an import
+binding from the `effect` package. The allowlist is a method-name list in
+`src/plugin/allowlist.ts`; it is not a path list and must not grow with file
+paths. The local name is irrelevant, so `import { Effect as Eff }` and
+`import * as Eff` are handled correctly. A locally-declared or shadowed object
+cannot bypass the ban.
+
+### Fixtures and tests
+
+`test/fixtures/rules/` holds passing, failing, alias, shadowing, and
+allowed-bridge fixtures for each rule. `test/plugin.test.ts` runs the real
+oxlint CLI against them and asserts on the JSON diagnostics and stable rule
+ids, and checks that every catalog rule id maps to a plugin rule key and vice
+versa. The fixtures are excluded from the main lint config; the Lens source and
+the non-fixture tests remain compliant with the strict rules.
+
 ## Cross-cutting concepts
 
 - **Package identity** (`PackageIdentity`) is the npm dependency identity taken

@@ -1,14 +1,21 @@
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "jsPlugins": ["./src/plugin/index.ts"],
   "categories": {
     "correctness": "error",
     "suspicious": "error",
     "perf": "warn"
   },
+  "rules": {
+    "lens/no-async-function": "error",
+    "lens/no-await-expression": "error",
+    "lens/no-new-promise": "error"
+  },
   "ignorePatterns": [
     "node_modules/**",
     "dist/**",
     "coverage/**",
+    "test/fixtures/rules/**",
     "**/*.tsbuildinfo"
   ],
   "overrides": [

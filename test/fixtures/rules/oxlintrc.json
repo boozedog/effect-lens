@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "jsPlugins": ["../../../src/plugin/index.ts"],
+  "categories": {
+    "correctness": "off",
+    "suspicious": "off",
+    "perf": "off"
+  },
+  "rules": {
+    "lens/no-async-function": "error",
+    "lens/no-await-expression": "error",
+    "lens/no-new-promise": "error"
+  }
+}
