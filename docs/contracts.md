@@ -69,9 +69,12 @@ the non-fixture tests remain compliant with the strict rules.
   the upstream Effect material. These are separate types on purpose: the
   installed version can be current while a reference pack points at a stale
   commit, and vice versa.
-- **Source kind** (`"upstream" | "lens-strict"`) records whether guidance or a
-  finding reflects upstream Effect practice or Lens strict policy. Lens
-  strict-policy rules are never presented as unqualified upstream authority.
+- **Source kind** (`"upstream" | "lens-strict" | "lens-advisory"`) records
+  whether guidance or a finding reflects upstream Effect practice, Lens strict
+  policy, or Lens advisory design analysis. Lens strict-policy rules are never
+  presented as unqualified upstream authority, and advisory design
+  recommendations (e.g. `@typeonce/effect-machine`) are never presented as
+  strict rules or as upstream Effect guidance.
 - **Every finding carries** its rule id, severity, source kind, version
   applicability, location, and evidence. There is no bare "text match" finding.
 
@@ -82,8 +85,12 @@ the non-fixture tests remain compliant with the strict rules.
 Literal union. Values:
 
 ```json
-"upstream" | "lens-strict"
+"upstream" | "lens-strict" | "lens-advisory"
 ```
+
+`lens-advisory` marks advisory design recommendations (see `statePressure`). It
+is additive and backward-compatible: existing `"upstream"` and `"lens-strict"`
+values still decode, and no exhaustive `src/` switch breaks.
 
 ### `UpstreamRef`
 
@@ -774,6 +781,15 @@ guidance or when the record does not apply to the active Effect version.
 Advice is ranked by confidence descending, then topic ascending. Diagnostics
 are emitted for incompatible (`stale`/`unknown`) references and for `conflict`
 guidance, so incompatible versioned references are never silently used.
+
+`designWithStatePressure` (see `statePressure`) merges the analyzer's
+`state-pressure` facts into `design` and, when the analysis recommends a
+machine, **prepends** an advisory `@typeonce/effect-machine` `DesignAdvice` to
+the ranked advice. That advice is a deliberate, non-version-gated exception:
+it carries `applicable: true` and `versionStatus: "unknown"` because it
+concerns the workflow, not an Effect version window. It is surfaced by
+prepending (it is the primary recommendation), not by the version-ranked
+confidence sort, and it is `lens-advisory` — never a strict `lens-strict` rule.
 
 ### Operation limitations
 

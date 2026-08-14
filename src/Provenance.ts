@@ -17,13 +17,15 @@ import * as Schema from "effect/Schema"
 
 /**
  * Whether a piece of guidance or a rule originates from upstream Effect
- * practice or from Lens strict policy. The model MUST keep these distinct so
- * Lens strict-policy rules are never presented as unqualified upstream
- * authority.
+ * practice, from Lens strict policy, or from Lens advisory design analysis.
+ * The model MUST keep these distinct so Lens strict-policy rules are never
+ * presented as unqualified upstream authority, and so advisory design
+ * recommendations (e.g. `@typeonce/effect-machine`) are never presented as
+ * strict rules or as upstream Effect guidance.
  *
  * @since 0.0.0
  */
-export const SourceKind = Schema.Literals(["upstream", "lens-strict"])
+export const SourceKind = Schema.Literals(["upstream", "lens-strict", "lens-advisory"])
 export type SourceKind = Schema.Schema.Type<typeof SourceKind>
 
 /**
