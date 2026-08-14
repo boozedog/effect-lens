@@ -19,7 +19,8 @@
     "lint": "oxlint",
     "format": "dprint fmt",
     "format:check": "dprint check",
-    "verify": "pnpm lint && pnpm format:check && pnpm check && pnpm test"
+    "verify": "pnpm lint && pnpm format:check && pnpm check && pnpm test",
+    "dogfood": "node scripts/dogfood.mjs"
   },
   "devDependencies": {
     "@effect/vitest": "4.0.0-rc.109",

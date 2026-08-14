@@ -24,6 +24,11 @@ The CLI is a thin adapter over the shared core operations. Run `pnpm cli -- --he
 from this repository, or `effect-lens --help` from a checked-out project. See
 `docs/cli.md` for details.
 
+## Self-dogfood
+
+Effect Lens checks Effect Lens itself. Run `pnpm dogfood` to verify the real
+CLI against this repository's production source. See `docs/dogfood.md`.
+
 ## Shared core
 
 The CLI, pi extension, and future MCP adapter share one set of core data
