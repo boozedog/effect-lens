@@ -21,11 +21,14 @@ import * as Schema from "effect/Schema"
  * The model MUST keep these distinct so Lens strict-policy rules are never
  * presented as unqualified upstream authority, and so advisory design
  * recommendations (e.g. `@typeonce/effect-machine`) are never presented as
- * strict rules or as upstream Effect guidance.
+ * strict rules or as upstream Effect guidance. A first-party project rule
+ * provider (e.g. StyleX) that has no Lens or upstream Effect equivalent is
+ * classified as `project` so it is never mislabeled as upstream Effect
+ * guidance or Lens strict policy.
  *
  * @since 0.0.0
  */
-export const SourceKind = Schema.Literals(["upstream", "lens-strict", "lens-advisory"])
+export const SourceKind = Schema.Literals(["upstream", "lens-strict", "lens-advisory", "project"])
 export type SourceKind = Schema.Schema.Type<typeof SourceKind>
 
 /**

@@ -16,8 +16,8 @@ The unified `check` gate normalizes toolchain diagnostics through registered
 rule providers. A provider owns a set of rule ids and normalizes a raw
 diagnostic into a `ProviderDiagnostic` that carries provider identity and
 provenance. The Lens strict rules are the first provider, followed by the
-Foldstryx first-party provider. StyleX is a later slice and registers through
-the same seam without changing the `review` operation.
+Foldstryx and StyleX first-party providers. All register through the same seam
+without changing the `review` operation.
 
 ### `ProviderDiagnostic`
 
@@ -58,9 +58,11 @@ interface RuleProvider {
 `normalize` converts a recognized raw diagnostic into a `ProviderDiagnostic`
 (or `null` when it does not recognize it). `src/provider/lens.ts` exports the
 `lensProvider`; `src/provider/foldstryx.ts` exports the `foldstryxProvider`;
+`src/provider/stylex.ts` exports the `stylexProvider` and the supported
+`stylexRuleIds` catalog;
 `src/provider/registry.ts` exports `ProviderRegistry` (which resolves a raw
 diagnostic to the first provider that recognizes it) and `defaultRegistry`
-(the Lens and Foldstryx providers registered).
+(the Lens, Foldstryx, and StyleX providers registered).
 
 ### `CheckMode`
 
@@ -102,6 +104,45 @@ with a Lens diagnostic. The `provider: "foldstryx"` field preserves the
 Foldstryx provenance. A Foldstryx rule with no Lens equivalent is not
 recognized by the provider and is surfaced as an unrecognized diagnostic rather
 than being coerced into a Lens rule.
+
+### StyleX provider and supported rule catalog
+
+The StyleX provider (`src/provider/stylex.ts`) recognizes the supported
+`stylex(...)` diagnostic codes and normalizes them with
+`provider: "stylex"` provenance and `source: "project"` classification. It
+never requires StyleX to be installed: it only recognizes diagnostic codes, so
+ordinary Lens-only projects are unaffected.
+
+The provider owns an explicit supported StyleX rule catalog
+(`stylexRuleIds`) — the official `@stylexjs/eslint-plugin` rule ids as of
+plugin version `0.19.0`:
+
+| StyleX rule                          |
+| ------------------------------------ |
+| `stylex/valid-styles`                |
+| `stylex/valid-shorthands`            |
+| `stylex/no-unused`                   |
+| `stylex/no-legacy-contextual-styles` |
+| `stylex/no-conflicting-props`        |
+| `stylex/no-nonstandard-styles`       |
+| `stylex/no-lookahead-selectors`      |
+| `stylex/sort-keys`                   |
+| `stylex/enforce-extension`           |
+
+Unlike Foldstryx, StyleX rules have no canonical Lens equivalent: they enforce
+StyleX style policy, not Effect-first policy. A supported StyleX diagnostic is
+therefore normalized to its own StyleX rule id with `source: "project"` and
+StyleX plugin evidence, so the `review` operation keeps it as a distinct
+finding rather than coercing it into a Lens rule or a migration entry. A StyleX
+rule outside the catalog is not trusted blindly — it is not recognized by the
+provider and is surfaced as an unrecognized diagnostic.
+
+Oxlint reports these rules as `stylex(<rule>)` codes (the plugin is loaded
+under the `stylex` alias), which the provider maps to the `stylex/<rule>` ids
+above. The official ESLint ids are `@stylexjs/<rule>`; the provider recognizes
+the oxlint `stylex(<rule>)` form, not the `@stylexjs(...)` form. A rule added
+in a later plugin version is not in the catalog and stays unrecognized until
+the catalog is extended.
 
 ## Rule catalog and oxlint plugin
 
@@ -162,12 +203,14 @@ the non-fixture tests remain compliant with the strict rules.
   the upstream Effect material. These are separate types on purpose: the
   installed version can be current while a reference pack points at a stale
   commit, and vice versa.
-- **Source kind** (`"upstream" | "lens-strict" | "lens-advisory"`) records
+- **Source kind** (`"upstream" | "lens-strict" | "lens-advisory" | "project"`) records
   whether guidance or a finding reflects upstream Effect practice, Lens strict
-  policy, or Lens advisory design analysis. Lens strict-policy rules are never
+  policy, Lens advisory design analysis, or a first-party project rule. Lens strict-policy rules are never
   presented as unqualified upstream authority, and advisory design
   recommendations (e.g. `@typeonce/effect-machine`) are never presented as
-  strict rules or as upstream Effect guidance.
+  strict rules or as upstream Effect guidance. A first-party project rule (e.g.
+  StyleX) with no Lens or upstream Effect equivalent is classified as `project`
+  so it is never mislabeled as upstream Effect guidance or Lens strict policy.
 - **Every finding carries** its rule id, severity, source kind, version
   applicability, location, and evidence. There is no bare "text match" finding.
 
@@ -178,12 +221,14 @@ the non-fixture tests remain compliant with the strict rules.
 Literal union. Values:
 
 ```json
-"upstream" | "lens-strict" | "lens-advisory"
+"upstream" | "lens-strict" | "lens-advisory" | "project"
 ```
 
 `lens-advisory` marks advisory design recommendations (see `statePressure`). It
 is additive and backward-compatible: existing `"upstream"` and `"lens-strict"`
-values still decode, and no exhaustive `src/` switch breaks.
+values still decode, and no exhaustive `src/` switch breaks. `project` marks a
+first-party project rule (e.g. StyleX) that has no Lens or upstream Effect
+equivalent; it is additive and backward-compatible for the same reason.
 
 ### `UpstreamRef`
 
@@ -377,9 +422,10 @@ Narrow scope is preferred. There is no blanket disable mechanism.
 ```
 
 `provider` is the stable provider identity that produced the finding (`"lens"`
-for the Lens provider, `"foldstryx"` for the Foldstryx provider). The key is
-always present in encoded output (`makeFinding` defaults it to `"lens"`); it
-decodes as `null` for legacy values that predate the field.
+for the Lens provider, `"foldstryx"` for the Foldstryx provider, `"stylex"`
+for the StyleX provider). The key is always present in encoded output
+(`makeFinding` defaults it to `"lens"`); it decodes as `null` for legacy values
+that predate the field.
 
 ### `Diagnostic`
 
@@ -1276,13 +1322,17 @@ silently used. A query with no matches emits a `lookup-no-matches` diagnostic.
 
 Maps oxlint diagnostics to stable Lens `Finding` values and summarises them. It
 normalizes each raw diagnostic through the registered rule providers (the Lens
-strict rules are the first provider, followed by the Foldstryx first-party
-provider) and maps the normalized diagnostics to stable `Finding` values.
+strict rules are the first provider, followed by the Foldstryx and StyleX
+first-party providers) and maps the normalized diagnostics to stable `Finding` values.
 Equivalent Lens and Foldstryx diagnostics that refer to the same canonical rule
 and location collapse to a single finding; the redundant Foldstryx diagnostic
 becomes a migration diagnostic plus a `MigrationReport` entry. Diagnostics that
 no provider recognizes are never coerced into Lens findings; they are surfaced
 as non-rule `Diagnostic` values.
+
+StyleX diagnostics have no Lens equivalent, so they are kept as distinct
+findings with `provider: "stylex"` provenance and `source: "project"`
+classification, and never produce a migration entry.
 
 `review` accepts an optional `mode` (`lens-only` default | `unified`) and an
 optional `providers` list. In `lens-only` mode unrecognized diagnostics are

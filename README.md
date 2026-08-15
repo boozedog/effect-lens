@@ -94,8 +94,8 @@ the operation contracts.
 
 `check` is a configurable unified gate foundation. It normalizes toolchain
 diagnostics through registered rule providers (`src/provider/`); the Lens
-strict rules are the first provider, followed by the Foldstryx first-party
-provider. `check` runs in two modes: `lens-only`
+strict rules are the first provider, followed by the Foldstryx and StyleX
+first-party providers. `check` runs in two modes: `lens-only`
 (default, preserving the existing single-package behavior) and `unified` (a
 config-preserving gate that loads the target repository's oxlint config —
 ignores, overrides, and rule settings — while loading the Lens rules, and
@@ -104,6 +104,10 @@ equivalent Lens and Foldstryx diagnostics at the same rule/location collapse
 to a single finding, and a read-only migration report recommends the Lens
 equivalent for each redundant Foldstryx rule. See `docs/cli.md` for the modes,
 configuration precedence, and migration behavior.
+
+The StyleX provider recognizes the supported official `@stylexjs/eslint-plugin`
+rule catalog and keeps StyleX findings with `provider: "stylex"` provenance and
+`source: "project"` classification, distinct from Lens strict/upstream guidance.
 
 ## Reference-pack acquisition planning
 

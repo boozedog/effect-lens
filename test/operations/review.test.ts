@@ -8,6 +8,7 @@ import * as Review from "../../src/operations/review.ts"
 import { foldstryxProvider } from "../../src/provider/foldstryx.ts"
 import { lensProvider } from "../../src/provider/lens.ts"
 import { ProviderDiagnostic, type RuleProvider } from "../../src/provider/Provider.ts"
+import { stylexProvider } from "../../src/provider/stylex.ts"
 
 const diag = (args: {
   code: string
@@ -375,5 +376,104 @@ describe("review with Foldstryx provider and migration dedup", () => {
     const decoded = Schema.decodeUnknownSync(Review.ReviewResult)(json)
     expect(Schema.encodeSync(Review.ReviewResult)(decoded)).toEqual(json)
     expect(decoded.migration.entries).toHaveLength(1)
+  })
+})
+
+describe("review with StyleX provider", () => {
+  it("StyleX-only: a StyleX diagnostic becomes a finding with stylex provenance and project source", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [diag({ code: "stylex(valid-styles)", line: 3 })]
+      }),
+      providers: [stylexProvider]
+    })
+    expect(result.findings).toHaveLength(1)
+    expect(result.findings[0].rule).toBe("stylex/valid-styles")
+    expect(Option.getOrNull(result.findings[0].provider)).toBe("stylex")
+    expect(result.findings[0].source).toBe("project")
+    expect(result.findings[0].location.line).toBe(3)
+    expect(result.migration.entries).toEqual([])
+  })
+
+  it("StyleX warning severity is preserved in the finding and summary", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [diag({ code: "stylex(sort-keys)", severity: "warning", line: 5 })]
+      }),
+      providers: [stylexProvider]
+    })
+    expect(result.findings).toHaveLength(1)
+    expect(result.findings[0].severity).toBe("warning")
+    expect(result.summary.warnings).toBe(1)
+    expect(result.status).toBe(1)
+  })
+
+  it("Lens + Foldstryx + StyleX aggregate as distinct findings with their own provenance", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [
+          diag({ code: "lens(no-async-function)", line: 3 }),
+          diag({ code: "foldstryx(no-async-function)", line: 3 }),
+          diag({ code: "stylex(valid-styles)", line: 9 })
+        ]
+      }),
+      providers: [lensProvider, foldstryxProvider, stylexProvider]
+    })
+    // The Lens + Foldstryx pair collapses to one Lens finding; the StyleX
+    // finding is kept separately with its own provenance.
+    expect(result.findings).toHaveLength(2)
+    const lens = result.findings.find((f) => f.rule === "lens/no-async-function")
+    const stylex = result.findings.find((f) => f.rule === "stylex/valid-styles")
+    expect(lens).toBeDefined()
+    expect(stylex).toBeDefined()
+    expect(Option.getOrNull(lens!.provider)).toBe("lens")
+    expect(Option.getOrNull(stylex!.provider)).toBe("stylex")
+    expect(stylex!.source).toBe("project")
+    // Only the Foldstryx overlap is a migration; StyleX has no Lens equivalent.
+    expect(result.migration.entries).toHaveLength(1)
+    expect(result.migration.entries[0].providerRule).toBe("foldstryx/no-async-function")
+  })
+
+  it("unsupported stylex code is surfaced as an unrecognized diagnostic, not trusted", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [diag({ code: "stylex(no-such-rule)", severity: "error", line: 3 })]
+      }),
+      mode: "unified",
+      providers: [lensProvider, foldstryxProvider, stylexProvider]
+    })
+    expect(result.findings).toEqual([])
+    expect(result.diagnostics).toHaveLength(1)
+    expect(result.diagnostics[0].severity).toBe("error")
+    expect(result.diagnostics[0].message).toContain("stylex(no-such-rule)")
+    expect(result.migration.entries).toEqual([])
+  })
+
+  it("missing StyleX plugin: a stylex code is unrecognized when only Lens is registered", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [diag({ code: "stylex(valid-styles)", severity: "error", line: 3 })]
+      }),
+      providers: [lensProvider]
+    })
+    expect(result.findings).toEqual([])
+    expect(result.diagnostics).toHaveLength(1)
+    expect(result.diagnostics[0].severity).toBe("off")
+    expect(result.diagnostics[0].message).toContain("stylex(valid-styles)")
+    expect(result.migration.entries).toEqual([])
+  })
+
+  it("round-trips a ReviewResult with a StyleX finding through JSON", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [diag({ code: "stylex(valid-styles)", line: 3 })]
+      }),
+      providers: [stylexProvider]
+    })
+    const json = Schema.encodeSync(Review.ReviewResult)(result)
+    const decoded = Schema.decodeUnknownSync(Review.ReviewResult)(json)
+    expect(Schema.encodeSync(Review.ReviewResult)(decoded)).toEqual(json)
+    expect(decoded.findings[0].rule).toBe("stylex/valid-styles")
+    expect(Option.getOrNull(decoded.findings[0].provider)).toBe("stylex")
   })
 })

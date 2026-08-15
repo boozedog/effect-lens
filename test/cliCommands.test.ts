@@ -29,6 +29,9 @@ const unifiedProject = fileURLToPath(new URL("./fixtures/projects/check-unified"
 const foldstryxPlugin = fileURLToPath(
   new URL("./fixtures/projects/check-foldstryx/foldstryx-plugin.ts", import.meta.url)
 )
+const stylexPlugin = fileURLToPath(
+  new URL("./fixtures/projects/check-stylex/stylex-plugin.ts", import.meta.url)
+)
 
 /**
  * A synchronous sleep used to poll for transient-config cleanup. `Atomics.wait`
@@ -423,6 +426,58 @@ describe("check", () => {
       // The human output surfaces the migration section.
       expect(result.human.join("\n")).toContain("migration:")
       expect(result.human.join("\n")).toContain("foldstryx/no-async-function")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("unified mode surfaces StyleX findings with stylex provenance and project source", () => {
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-stylex-"))
+    try {
+      writeFileSync(
+        join(dir, ".oxlintrc.json"),
+        JSON.stringify({
+          jsPlugins: [stylexPlugin],
+          rules: { "stylex/valid-styles": "error", "stylex/sort-keys": "warn" }
+        })
+      )
+      mkdirSync(join(dir, "src"))
+      writeFileSync(
+        join(dir, "src", "a.ts"),
+        "import * as stylex from '@stylexjs/stylex'\n" +
+          "const styles = stylex.create({ root: { color: 'red' } })\n" +
+          "void styles\n"
+      )
+      const result = check({ projectDir: dir, cacheDir, mode: "unified" })
+      // The StyleX provider recognizes the stylex(...) codes and keeps them
+      // as findings with stylex provenance and project source.
+      const stylexFindings = result.machineOutput.findings.filter(
+        (f) => Option.getOrNull(f.provider) === "stylex"
+      )
+      expect(stylexFindings.length).toBeGreaterThan(0)
+      expect(stylexFindings.every((f) => f.source === "project")).toBe(true)
+      expect(stylexFindings.some((f) => f.rule === "stylex/valid-styles")).toBe(true)
+      // Warning severity is preserved: the error rule stays blocking and the
+      // warn rule stays advisory.
+      expect(stylexFindings.some((f) => f.rule === "stylex/valid-styles" && f.severity === "error"))
+        .toBe(
+          true
+        )
+      expect(stylexFindings.some((f) => f.rule === "stylex/sort-keys" && f.severity === "warning"))
+        .toBe(
+          true
+        )
+      // The aggregate status reflects the blocking StyleX error.
+      expect(result.machineOutput.status).toBe(2)
+      // No migration: StyleX rules have no Lens equivalent.
+      const json = result.json as {
+        review: { migration: { entries: Array<{ providerRule: string }> } }
+      }
+      expect(json.review.migration.entries.some((e) => e.providerRule.startsWith("stylex/"))).toBe(
+        false
+      )
+      // The human output surfaces the StyleX findings.
+      expect(result.human.join("\n")).toContain("stylex/valid-styles")
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

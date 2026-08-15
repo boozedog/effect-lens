@@ -18,6 +18,7 @@
     "test/fixtures/rules/**",
     "test/fixtures/projects/check-unified/**",
     "test/fixtures/projects/check-foldstryx/**",
+    "test/fixtures/projects/check-stylex/**",
     "**/*.tsbuildinfo"
   ],
   "overrides": [

@@ -134,7 +134,7 @@ Runs the available local read-only review path and aggregates findings and
 diagnostics into a `MachineOutput`. `check` is a configurable unified gate
 foundation: it normalizes toolchain diagnostics through registered rule
 providers (the Lens strict rules are the first provider, followed by the
-Foldstryx first-party provider) and surfaces the result as stable findings and
+Foldstryx and StyleX first-party providers) and surfaces the result as stable findings and
 diagnostics.
 
 ```sh
@@ -221,6 +221,46 @@ the same canonical rule and location:
   dropped.
 
 The migration report and diagnostics are advisory and never mutate config.
+
+#### StyleX provider
+
+`check` recognizes supported StyleX diagnostics through the registered StyleX
+provider. The provider owns an explicit supported StyleX rule catalog — the
+official `@stylexjs/eslint-plugin` rule ids:
+
+| StyleX rule                          |
+| ------------------------------------ |
+| `stylex/valid-styles`                |
+| `stylex/valid-shorthands`            |
+| `stylex/no-unused`                   |
+| `stylex/no-legacy-contextual-styles` |
+| `stylex/no-conflicting-props`        |
+| `stylex/no-nonstandard-styles`       |
+| `stylex/no-lookahead-selectors`      |
+| `stylex/sort-keys`                   |
+| `stylex/enforce-extension`           |
+
+It never requires StyleX to be installed: it only recognizes `stylex(...)`
+diagnostic codes, so ordinary Lens-only projects are unaffected. A StyleX rule
+outside the catalog is not trusted blindly — it is surfaced as an unrecognized
+diagnostic rather than coerced into a Lens rule.
+
+The catalog is pinned to the official `@stylexjs/eslint-plugin` rule names as
+of plugin version `0.19.0`. Oxlint reports these as `stylex(<rule>)` codes
+(the plugin is loaded under the `stylex` alias), which the provider maps to the
+`stylex/<rule>` ids above. The official ESLint ids are `@stylexjs/<rule>`; the
+provider recognizes the oxlint `stylex(<rule>)` form, not the `@stylexjs(...)`
+form. A rule added in a later plugin version is not in the catalog and stays
+unrecognized until the catalog is extended.
+
+Unlike Foldstryx, StyleX rules have no canonical Lens equivalent: they enforce
+StyleX style policy, not Effect-first policy. A supported StyleX diagnostic is
+therefore kept as a finding with `provider: "stylex"` provenance and
+`source: "project"` classification, so it is never mislabeled as upstream
+Effect guidance or Lens strict policy, and it never produces a migration entry.
+StyleX findings are surfaced with their raw oxlint severity (an `error` stays
+blocking, a `warning` stays advisory) and aggregate alongside Lens and Foldstryx
+findings in the unified gate.
 
 ### `effect-lens setup --dry-run`
 
@@ -432,9 +472,8 @@ check passes; it never touches project configuration.
   explicitly.
 - `check` runs the Lens strict rules and the standard correctness/suspicious
   categories. It does not yet run the full `lookup`/`design`/state-pressure
-  analysis surfaces. The Lens and Foldstryx providers are registered; the
-  StyleX first-party provider is a later slice and registers through the same
-  seam.
+  analysis surfaces. The Lens, Foldstryx, and StyleX providers are registered
+  through the same seam.
 - `setup --apply` and `hooks install|uninstall` mutate only the `hk` hook
   manager (`hk.pkl`); creating a `hk.pkl` from scratch (run `hk init` first)
   and mutating the other hook managers are out of scope for this slice.

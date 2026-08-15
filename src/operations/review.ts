@@ -4,7 +4,7 @@
  *
  * Review normalizes each raw diagnostic through the registered rule providers
  * (the Lens strict rules are the first provider, followed by the Foldstryx
- * first-party provider) and maps the normalized diagnostics to stable
+ * and StyleX first-party providers) and maps the normalized diagnostics to stable
  * {@link Finding} values. Equivalent Lens and Foldstryx diagnostics that refer
  * to the same canonical rule and location collapse to a single finding, and
  * the redundant Foldstryx diagnostic becomes a migration diagnostic plus a
