@@ -562,6 +562,76 @@ planning. Decision rules:
 (name and version) match only — never a range, compatible, or "any newer"
 selection.
 
+## `PackStatus` — src/PackStatus.ts
+
+Read-only baseline/status reporting for Lens-managed reference packs. It layers
+the explicit catalog baseline on top of the resolver and verifier so a target
+can answer the question issue #15 depends on: "does this project's exact target
+Effect version have a verified matching pack, and what baseline/candidate does
+the explicit catalog offer?" It is strictly read-only: it never fetches,
+writes, deletes, or updates cache files, and it never applies a remote,
+release-age, or channel policy.
+
+### `PackBaselineStatus`
+
+```json
+["unresolved", "absent", "stale", "corrupt", "complete", "mismatched", "verified"]
+```
+
+- `unresolved` — no exact target Effect identity could be derived (no declared
+  dependency, a range specifier, or a failed workspace target).
+- `absent` — no reference pack exists for the package at all.
+- `stale` — a cached pack is for a different Effect version; the exact pack is
+  absent.
+- `corrupt` — the exact pack is present but self-inconsistent (missing its own
+  declared files).
+- `complete` — the exact pack is present and self-consistent, but no catalog
+  baseline entry exists to verify it against (presence beats source).
+- `mismatched` — the exact pack is present and self-consistent but diverges
+  from the catalog baseline.
+- `verified` — the exact pack is present, self-consistent, and matches the
+  catalog baseline.
+
+### `PackStatusReport`
+
+```json
+{
+  "project": "/abs/project",
+  "cacheDir": "/abs/cache",
+  "workspace": "packages/foldkit | null",
+  "resolution": { "…": "…" },
+  "expected": { "name": "effect", "version": "4.0.0-beta.83", "source": "lockfile", "integrity": null } | null,
+  "localPack": { "id": "pack-effect-beta83", "…": "…" } | null,
+  "catalogEntry": { "id": "pack-effect-beta83", "…": "…" } | null,
+  "localVerification": { "manifest": { "…": "…" }, "missingFiles": [], "metadataChanged": false, "stale": false, "message": null } | null,
+  "baselineVerification": { "manifest": { "…": "…" }, "missingFiles": [], "metadataChanged": false, "stale": false, "message": null } | null,
+  "candidateBaselines": [{ "id": "pack-effect-109", "…": "…" }],
+  "status": "verified",
+  "diagnostics": [],
+  "message": "reference pack pack-effect-beta83 is verified against the catalog baseline | null"
+}
+```
+
+`reportPackStatus({ projectDir, cacheDir, catalog, workspace? })` returns the
+report. Decision rules:
+
+1. No exact target identity (no dependency, range specifier, or failed
+   workspace target) → `unresolved`.
+2. No pack for the package → `absent`; a cached different-version pack →
+   `stale`.
+3. Exact pack present but missing its own declared files → `corrupt`.
+4. Exact pack present and self-consistent: with no catalog baseline entry →
+   `complete`; with a matching entry → `verified`; with a divergent entry →
+   `mismatched`.
+
+The baseline comparison (`baselineVerification`) is `verifyPack` against the
+selected catalog entry directly, so a changed on-disk manifest, a missing
+baseline file, or a different upstream ref/integrity/included-path set relative
+to the catalog is reported as `mismatched`. `candidateBaselines` are the
+catalog entries for the same package name that are not the exact match, sorted
+deterministically by id and reported as read-only availability only — no
+release-age, channel, or ordering policy is applied here.
+
 ## `PackAcquire` — src/PackAcquire.ts
 
 Explicit reference-pack acquisition with verification and atomic cache

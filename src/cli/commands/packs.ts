@@ -1,5 +1,13 @@
 /**
- * `effect-lens packs plan` and `effect-lens packs fetch`.
+ * `effect-lens packs status`, `effect-lens packs plan`, and
+ * `effect-lens packs fetch`.
+ *
+ * `packs status` is a thin adapter over the shared-core read-only baseline
+ * reporter (`PackStatus.reportPackStatus`): it loads an explicit catalog
+ * baseline and reports whether the project's exact Effect pack is `unresolved`,
+ * `absent`, `stale`, `corrupt`, `complete`, `mismatched`, or `verified`, plus
+ * the same-name candidate baselines the catalog offers. It is strictly
+ * read-only — it never fetches, writes, deletes, or updates cache files.
  *
  * `packs plan` is a thin adapter over the shared-core read-only planner
  * (`PackPlan.planPackAcquisition`): it loads an explicit catalog baseline and
@@ -23,9 +31,39 @@ import { aggregateStatus, MachineOutput, makeMachineOutput } from "../../ExitSta
 import { makeDiagnostic } from "../../operations/shared.ts"
 import * as PackAcquire from "../../PackAcquire.ts"
 import * as PackPlan from "../../PackPlan.ts"
+import * as PackStatus from "../../PackStatus.ts"
 import * as PackTransport from "../../PackTransport.ts"
 import { encode } from "../encode.ts"
 import type { CliContext, CliResult } from "../types.ts"
+
+/**
+ * Runs the read-only `packs status` command.
+ *
+ * @since 0.0.0
+ */
+export const packsStatus = (
+  context: CliContext & { catalogDir: string }
+): CliResult => {
+  const catalog = PackPlan.loadPackCatalog(context.catalogDir)
+  const report = PackStatus.reportPackStatus({
+    projectDir: context.projectDir,
+    cacheDir: context.cacheDir,
+    catalog,
+    workspace: context.workspace
+  })
+  const machineOutput = makeMachineOutput({
+    status: aggregateStatus({ findings: [], diagnostics: report.diagnostics }),
+    diagnostics: [...report.diagnostics]
+  })
+  return {
+    machineOutput,
+    json: {
+      machineOutput: encode(MachineOutput, machineOutput),
+      report: encode(PackStatus.PackStatusReport, report)
+    },
+    human: buildStatusHuman(report)
+  }
+}
 
 /**
  * Runs the read-only `packs plan` command.
@@ -125,6 +163,42 @@ export const packsFetch = (
     },
     human: buildFetchHuman(result)
   }
+}
+
+/**
+ * Builds the concise human-readable `packs status` report.
+ *
+ * @since 0.0.0
+ */
+const buildStatusHuman = (report: PackStatus.PackStatusReport): Array<string> => {
+  const lines: Array<string> = ["effect-lens packs status"]
+  const expected = Option.getOrNull(report.expected)
+  const workspace = Option.getOrNull(report.workspace)
+  lines.push(`project: ${report.project}`)
+  if (workspace !== null) lines.push(`workspace: ${workspace}`)
+  lines.push(`effect: ${expected?.version ?? "none"} (${expected?.source ?? "undeclared"})`)
+  lines.push(`status: ${report.status}`)
+  const localPack = Option.getOrNull(report.localPack)
+  lines.push(`local pack: ${localPack?.id ?? "none"}`)
+  const catalogEntry = Option.getOrNull(report.catalogEntry)
+  lines.push(`catalog entry: ${catalogEntry?.id ?? "none"}`)
+  if (report.candidateBaselines.length > 0) {
+    lines.push(
+      `candidate baselines: ${report.candidateBaselines.map((c) => c.id).join(", ")}`
+    )
+  } else {
+    lines.push("candidate baselines: none")
+  }
+  if (report.diagnostics.length > 0) {
+    lines.push("diagnostics:")
+    for (const d of report.diagnostics) {
+      lines.push(`  - [${d.severity}] ${d.message}`)
+    }
+  }
+  const message = Option.getOrNull(report.message)
+  if (message !== null) lines.push(message)
+  lines.push("note: status only; no files were changed")
+  return lines
 }
 
 /**

@@ -262,7 +262,7 @@ const diag = (
  *
  * @since 0.0.0
  */
-const isExactVersion = (version: string): boolean =>
+export const isExactVersion = (version: string): boolean =>
   /^\d+(\.\d+){2}(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/.test(version)
 
 const resolutionUnavailable = (args: {

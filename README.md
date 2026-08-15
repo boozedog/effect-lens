@@ -3,7 +3,8 @@
 Effect Lens is an advisory tool for Effect v4 TypeScript development. It ships a
 CLI (`effect-lens doctor`, `effect-lens drift`, `effect-lens check`, `effect-lens
 setup --dry-run` / `setup --apply`, `effect-lens hooks status` / `install` /
-`uninstall`, `effect-lens packs plan` / `packs fetch`) that inspects a project's Effect tooling, reports findings and
+`uninstall`, `effect-lens packs status` / `packs plan` / `packs fetch`) that
+inspects a project's Effect tooling, reports findings and
 diagnostics with stable human-readable and machine-readable output and stable
 exit codes, and sets up the `hk` hook-manager check explicitly. See
 `docs/cli.md` for the command reference, read-only/mutation behavior, and
@@ -18,8 +19,9 @@ Planned surfaces:
   for the explicit mutating hooks install.
 - `effect-lens hooks status` / `install` / `uninstall` for hook-manager
   inspection and explicit `hk` hook mutation.
-- `effect-lens packs plan` / `packs fetch` for read-only reference-pack
-  acquisition planning and explicit, verified pack acquisition.
+- `effect-lens packs status` / `packs plan` for read-only reference-pack
+  baseline/status and acquisition planning, and `packs fetch` for explicit,
+  verified pack acquisition.
 - `effect_lens_lookup` for local Effect guidance and source lookup.
 - `effect_lens_review` for AST/type-aware code review.
 - `effect_lens_design` for Effect-first implementation guidance.
@@ -38,7 +40,7 @@ from this repository, or `effect-lens --help` from a checked-out project. See
 In a pnpm monorepo the lockfile lives at the repository root while Effect may
 be declared in a workspace package. Pass `--workspace <pkg>` (relative to
 `--project`) to the resolution-based commands (`doctor`, `drift`,
-`setup --dry-run`, `packs plan`) to resolve that package's Effect version from
+`setup --dry-run`, `packs plan`, `packs status`) to resolve that package's Effect version from
 the root lockfile and select the exact reference pack. The target may be the
 full importer path (`packages/foldkit`) or the final path segment (`foldkit`);
 an ambiguous basename and an unmatched target are reported as blocking errors.
@@ -107,11 +109,17 @@ and performs no network I/O itself.
 The `packs` CLI surface exposes this explicitly:
 
 ```sh
+effect-lens packs status --project . --cache <dir> --catalog <dir> --json
 effect-lens packs plan --project . --cache <dir> --catalog <dir> --json
 effect-lens packs fetch --project . --cache <dir> --catalog <dir> --id <pack-id> --json
 ```
 
-`packs plan` is read-only. `packs fetch` is the only command that invokes a
+`packs status` and `packs plan` are read-only. `packs status` reports whether
+the project's exact Effect pack is `unresolved`, `absent`, `stale`, `corrupt`,
+`complete`, `mismatched`, or `verified` against an explicit catalog baseline,
+plus the same-name candidate baselines the catalog offers (read-only
+availability for the future freshness recommendation, issue #15). `packs fetch`
+is the only command that invokes a
 transport: it requires an explicit `--catalog` and an exact `--id`, stages the
 artifact via the local-directory transport (`src/PackTransport.ts`), and hands
 it to `acquirePack`, which verifies identity, version, integrity, path-traversal

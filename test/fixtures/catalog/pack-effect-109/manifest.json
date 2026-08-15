@@ -1,0 +1,21 @@
+{
+  "id": "pack-effect-109",
+  "effectVersion": "4.0.0-rc.109",
+  "packageIdentity": {
+    "name": "effect",
+    "version": "4.0.0-rc.109",
+    "source": "lockfile",
+    "integrity": null
+  },
+  "upstream": {
+    "repository": "effect-ts/effect",
+    "ref": "v4.0.0-rc.109",
+    "commit": "deadbeef",
+    "sourceUrl": null
+  },
+  "includedPaths": ["LLMS.md", "ai-docs/guide.md"],
+  "sourceUrl": null,
+  "integrity": null,
+  "attribution": null,
+  "status": "complete"
+}

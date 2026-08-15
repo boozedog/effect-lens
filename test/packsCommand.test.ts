@@ -20,7 +20,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { doctor } from "../src/cli/commands/doctor.ts"
 import { drift } from "../src/cli/commands/drift.ts"
-import { packsFetch, packsPlan } from "../src/cli/commands/packs.ts"
+import { packsFetch, packsPlan, packsStatus } from "../src/cli/commands/packs.ts"
 import * as PackageIdentity from "../src/PackageIdentity.ts"
 import * as Provenance from "../src/Provenance.ts"
 import * as ReferencePack from "../src/ReferencePack.ts"
@@ -258,5 +258,128 @@ describe("no implicit fetch", () => {
     expect(readdirSync(cacheDir)).toEqual([])
     expect(driftResult.machineOutput.status).toBe(1)
     expect(readdirSync(cacheDir)).toEqual([])
+  })
+})
+
+describe("packs status", () => {
+  const tempCacheWithPack = (manifest: ReferencePack.PackManifest): string => {
+    const dir = track(mkdtempSync(join(tmpdir(), "el-status-cache-")))
+    const packDir = join(dir, manifest.id)
+    mkdirSync(packDir, { recursive: true })
+    for (const p of manifest.includedPaths) {
+      const file = join(packDir, p)
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, "content")
+    }
+    writeManifest(packDir, manifest)
+    return dir
+  }
+
+  it("reports verified for an exact pack matching the catalog baseline", () => {
+    const entry = makeEntry()
+    const cacheDir = tempCacheWithPack(entry)
+    const catalogDir = tempCatalog(entry)
+    const result = packsStatus({ projectDir: project("pnpm-valid"), cacheDir, catalogDir })
+    expect(result.machineOutput.status).toBe(0)
+    const json = result.json as {
+      report: { status: string; candidateBaselines: Array<{ id: string }> }
+    }
+    expect(json.report.status).toBe("verified")
+    expect(json.report.candidateBaselines).toEqual([])
+  })
+
+  it("reports absent without mutating the cache", () => {
+    const cacheDir = tempCache()
+    const entry = makeEntry()
+    const catalogDir = tempCatalog(entry)
+    const result = packsStatus({ projectDir: project("pnpm-valid"), cacheDir, catalogDir })
+    expect(result.machineOutput.status).toBe(1)
+    const json = result.json as { report: { status: string } }
+    expect(json.report.status).toBe("absent")
+    expect(readdirSync(cacheDir)).toEqual([])
+  })
+
+  it("reports stale when the only cached pack lags the exact version", () => {
+    const lagEntry = makeEntry({ id: "pack-effect-100", version: "4.0.0-rc.100" })
+    const cacheDir = tempCacheWithPack(lagEntry)
+    const entry = makeEntry()
+    const catalogDir = tempCatalog(entry)
+    const result = packsStatus({ projectDir: project("pnpm-valid"), cacheDir, catalogDir })
+    expect(result.machineOutput.status).toBe(1)
+    const json = result.json as { report: { status: string } }
+    expect(json.report.status).toBe("stale")
+  })
+
+  it("reports corrupt when the exact pack misses a declared file", () => {
+    const entry = makeEntry()
+    const cacheDir = tempCacheWithPack(entry)
+    // Remove one declared file so the exact pack is self-inconsistent.
+    rmSync(join(cacheDir, entry.id, "ai-docs", "guide.md"))
+    const catalogDir = tempCatalog(entry)
+    const result = packsStatus({ projectDir: project("pnpm-valid"), cacheDir, catalogDir })
+    expect(result.machineOutput.status).toBe(1)
+    const json = result.json as { report: { status: string } }
+    expect(json.report.status).toBe("corrupt")
+  })
+
+  it("reports an unresolved target as a blocking error", () => {
+    const entry = makeEntry()
+    const cacheDir = tempCache()
+    const catalogDir = tempCatalog(entry)
+    const result = packsStatus({
+      projectDir: project("missing-dependency"),
+      cacheDir,
+      catalogDir
+    })
+    expect(result.machineOutput.status).toBe(2)
+    const json = result.json as { report: { status: string } }
+    expect(json.report.status).toBe("unresolved")
+  })
+
+  it("is read-only and never promotes a pack", () => {
+    const cacheDir = tempCache()
+    const entry = makeEntry({ sourceUrl: pathToFileURL(join(tmpdir(), "missing")).href })
+    const catalogDir = tempCatalog(entry)
+    const result = packsStatus({ projectDir: project("pnpm-valid"), cacheDir, catalogDir })
+    expect(result.machineOutput.status).toBe(1)
+    expect(existsSync(join(cacheDir, entry.id))).toBe(false)
+    expect(readdirSync(cacheDir)).toEqual([])
+  })
+
+  it("reports complete when no catalog baseline matches the intact exact pack", () => {
+    const entry = makeEntry()
+    const cacheDir = tempCacheWithPack(entry)
+    const other = makeEntry({ id: "pack-effect-100", version: "4.0.0-rc.100" })
+    const catalogDir = tempCatalog(other)
+    const result = packsStatus({ projectDir: project("pnpm-valid"), cacheDir, catalogDir })
+    expect(result.machineOutput.status).toBe(0)
+    const json = result.json as { report: { status: string } }
+    expect(json.report.status).toBe("complete")
+  })
+
+  it("reports mismatched when the exact pack diverges from the catalog baseline", () => {
+    const divergent = ReferencePack.makePackManifest({
+      id: "pack-effect-109",
+      effectVersion: "4.0.0-rc.109",
+      packageIdentity: PackageIdentity.makePackageIdentity({
+        name: "effect",
+        version: "4.0.0-rc.109",
+        source: "lockfile"
+      }),
+      upstream: Provenance.makeUpstreamRef({
+        repository: "effect-ts/effect",
+        ref: "v4.0.0-rc.109",
+        commit: "a-different-commit"
+      }),
+      includedPaths: [...INCLUDED],
+      status: "complete"
+    })
+    const cacheDir = tempCacheWithPack(divergent)
+    const entry = makeEntry()
+    const catalogDir = tempCatalog(entry)
+    const result = packsStatus({ projectDir: project("pnpm-valid"), cacheDir, catalogDir })
+    expect(result.machineOutput.status).toBe(1)
+    const json = result.json as { report: { status: string } }
+    expect(json.report.status).toBe("mismatched")
   })
 })

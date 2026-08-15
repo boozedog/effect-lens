@@ -1,0 +1,21 @@
+{
+  "id": "pack-effect-beta83",
+  "effectVersion": "4.0.0-beta.83",
+  "packageIdentity": {
+    "name": "effect",
+    "version": "4.0.0-beta.83",
+    "source": "lockfile",
+    "integrity": null
+  },
+  "upstream": {
+    "repository": "effect-ts/effect",
+    "ref": "v4.0.0-beta.83",
+    "commit": "beefcafe",
+    "sourceUrl": null
+  },
+  "includedPaths": ["LLMS.md"],
+  "sourceUrl": null,
+  "integrity": null,
+  "attribution": null,
+  "status": "complete"
+}

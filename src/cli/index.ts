@@ -8,7 +8,8 @@
  * output, and sets the process exit code from the resulting
  * {@link MachineOutput} (0 ok, 1 warning, 2 error). It never re-implements
  * policy; `setup --apply`, `hooks install|uninstall`, and `packs fetch` are
- * the explicit mutation paths; every other command is read-only.
+ * the explicit mutation paths; every other command (including `packs plan` and
+ * `packs status`) is read-only.
  *
  * @since 0.0.0
  */
@@ -20,7 +21,7 @@ import { check } from "./commands/check.ts"
 import { doctor } from "./commands/doctor.ts"
 import { drift } from "./commands/drift.ts"
 import { hooks, hooksInstall, hooksUninstall } from "./commands/hooks.ts"
-import { packsFetch, packsPlan } from "./commands/packs.ts"
+import { packsFetch, packsPlan, packsStatus } from "./commands/packs.ts"
 import { setup, setupApply } from "./commands/setup.ts"
 import { render } from "./output.ts"
 import type { CliContext, CliResult } from "./types.ts"
@@ -35,7 +36,7 @@ Commands:
   check    Run the local read-only review path and aggregate findings.
   setup    Build a setup plan (requires --dry-run or --apply).
   hooks    Manage hook-manager checks (subcommand: status, install, uninstall).
-  packs    Plan or explicitly fetch reference packs (subcommand: plan, fetch).
+  packs    Report, plan, or explicitly fetch reference packs (subcommand: status, plan, fetch).
 
 Options:
   -p, --project <dir>   Project directory (default: current directory)
@@ -190,7 +191,21 @@ const main = (): void => {
       }
       break
     case "packs":
-      if (positionals[1] === "plan") {
+      if (positionals[1] === "status") {
+        if (values.catalog === undefined) {
+          process.stderr.write(
+            `error: packs status requires --catalog <dir>\n\n${USAGE}`
+          )
+          process.exitCode = Exit.Error
+          return
+        }
+        result = packsStatus({
+          projectDir,
+          cacheDir,
+          catalogDir: resolve(values.catalog),
+          workspace: context.workspace
+        })
+      } else if (positionals[1] === "plan") {
         if (values.catalog === undefined) {
           process.stderr.write(
             `error: packs plan requires --catalog <dir>\n\n${USAGE}`
