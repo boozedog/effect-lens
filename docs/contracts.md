@@ -355,7 +355,7 @@ detected but reported as unsupported rather than guessed at.
 ### `ResolutionStatus`
 
 ```json
-"resolved" | "installed-mismatch" | "missing-lockfile" | "unsupported-lockfile" | "missing"
+"resolved" | "installed-mismatch" | "missing-lockfile" | "unsupported-lockfile" | "missing" | "workspace-ambiguous" | "workspace-unresolved"
 ```
 
 - `resolved` — expected identity derived from a supported lockfile and the
@@ -367,6 +367,10 @@ detected but reported as unsupported rather than guessed at.
 - `unsupported-lockfile` — a lockfile exists but is not supported; expected
   identity came from `package.json`.
 - `missing` — no `effect` dependency is declared in any committed metadata.
+- `workspace-ambiguous` — a requested workspace target matches more than one
+  lockfile importer.
+- `workspace-unresolved` — a requested workspace target matches no supported
+  lockfile importer.
 
 ### `Resolution`
 
@@ -388,6 +392,15 @@ The expected identity is derived in this order:
 2. `pnpm-lock.yaml` (pnpm) — preferred when present.
 3. `package.json` declared `effect` specifier — fallback when no supported
    lockfile is present or the lockfile has no `effect` entry.
+
+In a monorepo, the repository root is the lockfile/configuration boundary. An
+optional `workspace` target selects the package to resolve: the expected
+identity comes first from the target's matching root-lockfile importer (the
+root importer when no target is given), then from the target's `package.json`
+(when targeted) or the root `package.json`. A target that matches no single
+importer is reported as `workspace-ambiguous` or `workspace-unresolved` and
+never falls back to a guessed manifest. See `docs/cli.md` for the target
+selection rules.
 
 `yarn.lock` and `bun.lock`/`bun.lockb` are detected but reported as
 `unsupported-lockfile`; Lens does not guess at their format. The installed

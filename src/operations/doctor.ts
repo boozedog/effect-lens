@@ -19,6 +19,10 @@ import { makeDiagnostic } from "./shared.ts"
  * Builds the diagnostics for the Effect resolution outcome.
  *
  * - `missing` — no declared Effect dependency: blocking `error`.
+ * - `workspace-ambiguous` — the requested workspace target matches more than
+ *   one lockfile importer: blocking `error`.
+ * - `workspace-unresolved` — the requested workspace target matches no
+ *   supported importer: blocking `error`.
  * - `installed-mismatch` / `missing-lockfile` / `unsupported-lockfile` —
  *   advisory `warning`.
  * - `resolved` — no diagnostic.
@@ -33,6 +37,24 @@ const resolutionDiagnostics = (resolution: Resolver.Resolution): Array<Diagnosti
           id: "doctor-effect-missing",
           severity: "error",
           message: "no effect dependency declared in lockfile or package.json"
+        })
+      ]
+    case "workspace-ambiguous":
+      return [
+        makeDiagnostic({
+          id: "doctor-workspace-ambiguous",
+          severity: "error",
+          message: Option.getOrNull(resolution.detail) ??
+            "workspace target is ambiguous; specify the full importer path"
+        })
+      ]
+    case "workspace-unresolved":
+      return [
+        makeDiagnostic({
+          id: "doctor-workspace-unresolved",
+          severity: "error",
+          message: Option.getOrNull(resolution.detail) ??
+            "workspace target does not match any supported importer"
         })
       ]
     case "installed-mismatch":
@@ -126,11 +148,15 @@ export interface DoctorResult {
 export const doctorDiagnostics = (args: {
   projectDir: string
   cacheDir: string
+  workspace?: string | undefined
 }): DoctorResult => {
-  const resolution = Resolver.resolveEffectIdentity(args.projectDir)
+  const resolution = Resolver.resolveEffectIdentity(args.projectDir, {
+    workspace: args.workspace
+  })
   const pack = PackVerifier.verifyReferencePack({
     projectDir: args.projectDir,
-    cacheDir: args.cacheDir
+    cacheDir: args.cacheDir,
+    workspace: args.workspace
   })
   return {
     resolution,

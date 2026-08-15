@@ -265,6 +265,39 @@ describe("planPackAcquisition", () => {
     expect(plan.diagnostics[0]?.id).toBe("plan-resolution-unavailable")
   })
 
+  it("plans resolution-unavailable for a workspace target with no importer", () => {
+    // `ghost/` declares effect but is not a lockfile importer. A successful
+    // plan must not be produced from the guessed manifest: the outcome is a
+    // resolution failure.
+    const monorepo = fileURLToPath(
+      new URL("./fixtures/projects/monorepo", import.meta.url)
+    )
+    const plan = PackPlan.planPackAcquisition({
+      projectDir: monorepo,
+      cacheDir,
+      catalog: [catalogEntry109],
+      workspace: "ghost"
+    })
+    expect(plan.action).toBe("resolution-unavailable")
+    expect(Option.isNone(plan.expected)).toBe(true)
+    expect(plan.diagnostics[0]?.severity).toBe("error")
+    expect(plan.resolution.status).toBe("workspace-unresolved")
+  })
+
+  it("resolves a workspace target to the matching reference pack", () => {
+    const monorepo = fileURLToPath(
+      new URL("./fixtures/projects/monorepo", import.meta.url)
+    )
+    const plan = PackPlan.planPackAcquisition({
+      projectDir: monorepo,
+      cacheDir,
+      catalog: [catalogEntry109],
+      workspace: "packages/foldkit"
+    })
+    expect(plan.resolution.status).toBe("resolved")
+    expect(Option.getOrNull(plan.expected)?.version).toBe("4.0.0-beta.83")
+  })
+
   it("plans fetch-required for an exact declared version even without a supported lockfile", () => {
     // unsupported-lockfile pins an exact version in package.json, so acquisition
     // can be planned against an explicit catalog entry.

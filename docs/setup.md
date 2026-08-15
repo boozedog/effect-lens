@@ -41,7 +41,8 @@ The plan steps, in order, are:
    `unsupported`.
 2. **`effect-dependency`** — resolve the Effect dependency. `resolved` is `ok`;
    `missing`, `installed-mismatch`, and `missing-lockfile` are `needed`;
-   `unsupported-lockfile` is `unsupported`.
+   `unsupported-lockfile`, `workspace-ambiguous`, and `workspace-unresolved`
+   are `unsupported`.
 3. **`reference-pack`** — verify the reference pack. `complete` is `ok`;
    `missing`, `stale`, and `partial` are `needed`; `skip` when no Effect
    dependency is declared.

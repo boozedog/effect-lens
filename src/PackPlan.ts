@@ -311,16 +311,35 @@ export const planPackAcquisition = (args: {
   projectDir: string
   cacheDir: string
   catalog: PackCatalog | ReadonlyArray<PackManifest>
+  workspace?: string | undefined
 }): PackAcquisitionPlan => {
   const { projectDir, cacheDir } = args
   const entries = Array.isArray(args.catalog)
     ? args.catalog
     : (args.catalog as PackCatalog).entries
-  const resolution = Resolver.resolveEffectIdentity(projectDir)
+  const resolution = Resolver.resolveEffectIdentity(projectDir, { workspace: args.workspace })
   const expected = Option.getOrNull(resolution.expected)
-  const local = PackVerifier.verifyReferencePack({ projectDir, cacheDir })
+  const local = PackVerifier.verifyReferencePack({
+    projectDir,
+    cacheDir,
+    workspace: args.workspace
+  })
   const localPack = Option.getOrNull(local.pack)
   const localVerification = Option.getOrNull(local.verification)
+
+  // A workspace target that failed to resolve to a single importer is a
+  // resolution failure, never a successful plan: do not fall through to the
+  // declared-specifier or pack logic.
+  if (resolution.status === "workspace-ambiguous" || resolution.status === "workspace-unresolved") {
+    return resolutionUnavailable({
+      projectDir,
+      cacheDir,
+      resolution,
+      expected: null,
+      detail: Option.getOrNull(resolution.detail) ??
+        "workspace target could not be resolved to a single importer"
+    })
+  }
 
   // 1. No target identity at all.
   if (expected === null) {

@@ -126,6 +126,7 @@ const applySteps = (
 export const applySetupPlan = (args: {
   projectDir: string
   cacheDir: string
+  workspace?: string | undefined
 }): SetupApplyResult => {
   const plan = buildSetupPlan(args)
   const hasUnsupported = plan.steps.some((s) => s.status === "unsupported")

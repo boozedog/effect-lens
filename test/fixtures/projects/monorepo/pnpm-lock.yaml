@@ -1,0 +1,45 @@
+lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/foldkit:
+    dependencies:
+      effect:
+        specifier: 4.0.0-beta.83
+        version: 4.0.0-beta.83
+
+  packages/docs:
+    dependencies:
+      effect:
+        specifier: 4.0.0-rc.109
+        version: 4.0.0-rc.109
+
+  packages/tools/kit:
+    dependencies:
+      effect:
+        specifier: 4.0.0-rc.109
+        version: 4.0.0-rc.109
+
+  apps/kit:
+    dependencies:
+      effect:
+        specifier: 4.0.0-beta.83
+        version: 4.0.0-beta.83
+
+packages:
+
+  effect@4.0.0-beta.83:
+    resolution: {integrity: sha512-beta83integrity}
+    dependencies:
+      fast-check: 4.9.0
+
+  effect@4.0.0-rc.109:
+    resolution: {integrity: sha512-rc109integrity}
+    dependencies:
+      fast-check: 4.9.0

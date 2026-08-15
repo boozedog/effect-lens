@@ -102,16 +102,27 @@ export const verifyPack = (args: {
 /**
  * Resolves the project's expected Effect identity, locates the matching
  * reference pack in the cache, and verifies it. Produces a `PackStatus` of
- * `missing`, `stale`, `partial`, or `complete`.
+ * `missing`, `stale`, `partial`, or `complete`. An optional `workspace` target
+ * selects a monorepo package; see {@link Resolver.resolveEffectIdentity}.
  *
  * @since 0.0.0
  */
 export const verifyReferencePack = (args: {
   projectDir: string
   cacheDir: string
+  workspace?: string | undefined
 }): PackVerificationResult => {
-  const resolution = resolveEffectIdentity(args.projectDir)
+  const resolution = resolveEffectIdentity(args.projectDir, { workspace: args.workspace })
   const expected = Option.getOrNull(resolution.expected)
+  if (resolution.status === "workspace-ambiguous" || resolution.status === "workspace-unresolved") {
+    // The requested workspace target did not resolve to a single importer, so
+    // there is no exact identity to locate a pack for.
+    return makePackVerificationResult({
+      resolution,
+      status: "missing",
+      message: Option.getOrNull(resolution.detail) ?? "workspace target could not be resolved"
+    })
+  }
   if (expected === null) {
     // No declared effect dependency: nothing to locate.
     return makePackVerificationResult({

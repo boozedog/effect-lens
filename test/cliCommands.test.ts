@@ -19,6 +19,8 @@ const project = (name: string): string =>
 const cacheDir = fileURLToPath(new URL("./fixtures/cache", import.meta.url))
 const cacheStaleDir = fileURLToPath(new URL("./fixtures/cache-stale", import.meta.url))
 const cachePartialDir = fileURLToPath(new URL("./fixtures/cache-partial", import.meta.url))
+const cacheMonoDir = fileURLToPath(new URL("./fixtures/cache-mono", import.meta.url))
+const monorepo = fileURLToPath(new URL("./fixtures/projects/monorepo", import.meta.url))
 
 describe("doctor", () => {
   it("reports a resolved project with a complete pack as ok", () => {
@@ -73,6 +75,63 @@ describe("doctor", () => {
     const result = doctor({ projectDir: project("npm-valid"), cacheDir })
     expect(result.human[0]).toBe("effect-lens doctor")
     expect(result.human.join("\n")).toContain("reference pack: pack-effect-109 [complete]")
+  })
+
+  it("resolves a workspace target from a root pnpm lockfile", () => {
+    const result = doctor({
+      projectDir: monorepo,
+      cacheDir: cacheMonoDir,
+      workspace: "packages/foldkit"
+    })
+    expect(result.machineOutput.status).toBe(0)
+    const json = result.json as {
+      resolution: { status: string; expected: { version: string } | null; lockfile: string }
+      pack: { status: string; pack: { id: string } | null }
+    }
+    expect(json.resolution.lockfile).toBe("pnpm-lock")
+    expect(json.resolution.status).toBe("resolved")
+    expect(json.resolution.expected?.version).toBe("4.0.0-beta.83")
+    // Target-specific pack selection: the beta pack is chosen, not the 109 one.
+    expect(json.pack.status).toBe("complete")
+    expect(json.pack.pack?.id).toBe("pack-effect-beta83")
+  })
+
+  it("selects a different reference pack per workspace effect version", () => {
+    const docs = doctor({
+      projectDir: monorepo,
+      cacheDir: cacheMonoDir,
+      workspace: "packages/docs"
+    })
+    const docsJson = docs.json as { pack: { pack: { id: string } | null } }
+    expect(docsJson.pack.pack?.id).toBe("pack-effect-109")
+
+    const foldkit = doctor({
+      projectDir: monorepo,
+      cacheDir: cacheMonoDir,
+      workspace: "packages/foldkit"
+    })
+    const foldkitJson = foldkit.json as { pack: { pack: { id: string } | null } }
+    expect(foldkitJson.pack.pack?.id).toBe("pack-effect-beta83")
+  })
+
+  it("reports an unresolved workspace target as a blocking error", () => {
+    const result = doctor({
+      projectDir: monorepo,
+      cacheDir: cacheMonoDir,
+      workspace: "does-not-exist"
+    })
+    expect(result.machineOutput.status).toBe(2)
+    expect(
+      result.machineOutput.diagnostics.some((d) => d.id === "doctor-workspace-unresolved")
+    ).toBe(true)
+  })
+
+  it("reports an ambiguous workspace target as a blocking error", () => {
+    const result = doctor({ projectDir: monorepo, cacheDir: cacheMonoDir, workspace: "kit" })
+    expect(result.machineOutput.status).toBe(2)
+    expect(
+      result.machineOutput.diagnostics.some((d) => d.id === "doctor-workspace-ambiguous")
+    ).toBe(true)
   })
 })
 
@@ -140,6 +199,18 @@ describe("drift", () => {
     const result = drift({ projectDir: project("npm-valid"), cacheDir })
     expect(result.human[0]).toBe("effect-lens drift")
     expect(result.human.join("\n")).toContain("full upstream comparison is not available")
+  })
+
+  it("resolves a workspace target and reports the target's effect version", () => {
+    const result = drift({
+      projectDir: monorepo,
+      cacheDir: cacheMonoDir,
+      workspace: "packages/foldkit"
+    })
+    const json = result.json as {
+      report: { toolchain: { effect: { version: string } } }
+    }
+    expect(json.report.toolchain.effect.version).toBe("4.0.0-beta.83")
   })
 })
 

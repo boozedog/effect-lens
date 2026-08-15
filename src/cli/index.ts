@@ -23,7 +23,7 @@ import { hooks, hooksInstall, hooksUninstall } from "./commands/hooks.ts"
 import { packsFetch, packsPlan } from "./commands/packs.ts"
 import { setup, setupApply } from "./commands/setup.ts"
 import { render } from "./output.ts"
-import type { CliResult } from "./types.ts"
+import type { CliContext, CliResult } from "./types.ts"
 import { VERSION } from "./version.ts"
 
 const USAGE = `effect-lens ${VERSION}
@@ -39,6 +39,7 @@ Commands:
 
 Options:
   -p, --project <dir>   Project directory (default: current directory)
+      --workspace <pkg> Explicit workspace/package target relative to --project
   -c, --cache <dir>     Reference-pack cache directory
       --catalog <dir>   Reference-pack catalog baseline directory (packs only)
       --id <pack-id>    Exact catalog entry id to fetch (packs fetch only)
@@ -70,6 +71,7 @@ const main = (): void => {
   let values: {
     project?: string
     cache?: string
+    workspace?: string
     json?: boolean
     path?: string
     "dry-run"?: boolean
@@ -91,6 +93,7 @@ const main = (): void => {
       options: {
         project: { type: "string", short: "p" },
         cache: { type: "string", short: "c" },
+        workspace: { type: "string" },
         json: { type: "boolean", short: "j" },
         path: { type: "string" },
         "dry-run": { type: "boolean" },
@@ -131,14 +134,19 @@ const main = (): void => {
   const projectDir = resolve(values.project ?? ".")
   const cacheDir = resolve(values.cache ?? defaultCacheDir())
   const json = values.json === true
+  const context: CliContext = {
+    projectDir,
+    cacheDir,
+    workspace: values.workspace
+  }
 
   let result: CliResult
   switch (command) {
     case "doctor":
-      result = doctor({ projectDir, cacheDir })
+      result = doctor(context)
       break
     case "drift":
-      result = drift({ projectDir, cacheDir })
+      result = drift(context)
       break
     case "check":
       result = values.path === undefined
@@ -154,9 +162,9 @@ const main = (): void => {
         return
       }
       if (values["dry-run"] === true) {
-        result = setup({ projectDir, cacheDir })
+        result = setup(context)
       } else if (values.apply === true) {
-        result = setupApply({ projectDir, cacheDir })
+        result = setupApply({ projectDir, cacheDir, workspace: context.workspace })
       } else {
         process.stderr.write(
           `error: setup requires an explicit mode: --dry-run (read-only) or ` +
@@ -193,7 +201,8 @@ const main = (): void => {
         result = packsPlan({
           projectDir,
           cacheDir,
-          catalogDir: resolve(values.catalog)
+          catalogDir: resolve(values.catalog),
+          workspace: context.workspace
         })
       } else if (positionals[1] === "fetch") {
         if (values.catalog === undefined || values.id === undefined) {

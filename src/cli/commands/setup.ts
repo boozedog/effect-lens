@@ -28,7 +28,8 @@ import type { CliContext, CliResult } from "../types.ts"
 export const setup = (context: CliContext): CliResult => {
   const plan = Setup.buildSetupPlan({
     projectDir: context.projectDir,
-    cacheDir: context.cacheDir
+    cacheDir: context.cacheDir,
+    workspace: context.workspace
   })
   const machineOutput = makeMachineOutput({
     status: aggregateStatus({ findings: [], diagnostics: plan.diagnostics }),
@@ -86,7 +87,8 @@ const buildHuman = (plan: Setup.SetupPlan): Array<string> => {
 export const setupApply = (context: CliContext): CliResult => {
   const result = SetupApply.applySetupPlan({
     projectDir: context.projectDir,
-    cacheDir: context.cacheDir
+    cacheDir: context.cacheDir,
+    workspace: context.workspace
   })
   const machineOutput = makeMachineOutput({
     status: aggregateStatus({ findings: [], diagnostics: result.diagnostics }),

@@ -34,6 +34,8 @@ import { Resolution, ResolutionStatus, resolveEffectIdentity } from "../Resolver
  * - `resolved` — declared and installed agree: `compatible`.
  * - `installed-mismatch` — declared and installed differ: `conflict`.
  * - `missing` — no declared Effect dependency: `missing`.
+ * - `workspace-ambiguous` / `workspace-unresolved` — the requested workspace
+ *   target could not be resolved to a single supported importer: `missing`.
  * - `missing-lockfile` / `unsupported-lockfile` — the expected identity came
  *   from `package.json` (a range) rather than a reproducible lockfile: `stale`.
  *
@@ -46,6 +48,8 @@ const dependencyKind = (status: ResolutionStatus): DriftKind => {
     case "installed-mismatch":
       return "conflict"
     case "missing":
+    case "workspace-ambiguous":
+    case "workspace-unresolved":
       return "missing"
     case "missing-lockfile":
     case "unsupported-lockfile":
@@ -158,11 +162,13 @@ export const buildDriftReport = (args: {
   cacheDir: string
   lensVersion: string
   node?: string | null
+  workspace?: string | undefined
 }): DriftReport => {
-  const resolution = resolveEffectIdentity(args.projectDir)
+  const resolution = resolveEffectIdentity(args.projectDir, { workspace: args.workspace })
   const pack = PackVerifier.verifyReferencePack({
     projectDir: args.projectDir,
-    cacheDir: args.cacheDir
+    cacheDir: args.cacheDir,
+    workspace: args.workspace
   })
   const entries: Array<DriftEntry> = []
   // Always record the dependency entry so a missing dependency is surfaced as

@@ -207,6 +207,22 @@ const effectStep = (resolution: Resolution): SetupStep => {
         status: "unsupported",
         detail: Option.getOrNull(resolution.detail) ?? "unsupported lockfile detected"
       })
+    case "workspace-ambiguous":
+      return makeSetupStep({
+        id: "effect-dependency",
+        title: "Resolve Effect dependency",
+        status: "unsupported",
+        detail: Option.getOrNull(resolution.detail) ??
+          "workspace target is ambiguous; specify the full importer path"
+      })
+    case "workspace-unresolved":
+      return makeSetupStep({
+        id: "effect-dependency",
+        title: "Resolve Effect dependency",
+        status: "unsupported",
+        detail: Option.getOrNull(resolution.detail) ??
+          "workspace target does not match any supported importer"
+      })
   }
 }
 
@@ -358,11 +374,13 @@ const stepDiagnostics = (steps: Array<SetupStep>): Array<Diagnostic> => {
 export const buildSetupPlan = (args: {
   projectDir: string
   cacheDir: string
+  workspace?: string | undefined
 }): SetupPlan => {
-  const resolution = resolveEffectIdentity(args.projectDir)
+  const resolution = resolveEffectIdentity(args.projectDir, { workspace: args.workspace })
   const pack = PackVerifier.verifyReferencePack({
     projectDir: args.projectDir,
-    cacheDir: args.cacheDir
+    cacheDir: args.cacheDir,
+    workspace: args.workspace
   })
   const oxlint = oxlintStatus(args.projectDir)
   const hooks = Hooks.hooksStatus(args.projectDir)

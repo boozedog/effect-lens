@@ -63,7 +63,8 @@ export const drift = (context: CliContext): CliResult => {
   const report = buildDriftReport({
     projectDir: context.projectDir,
     cacheDir: context.cacheDir,
-    lensVersion: VERSION
+    lensVersion: VERSION,
+    workspace: context.workspace
   })
   const diagnostics = [...entryDiagnostics(report), OFFLINE_LIMITATION]
   const machineOutput = makeMachineOutput({

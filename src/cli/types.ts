@@ -38,4 +38,9 @@ export interface CliResult {
 export interface CliContext {
   readonly projectDir: string
   readonly cacheDir: string
+  /**
+   * An explicit workspace/package target within a monorepo, resolved against
+   * the root lockfile. Optional; when absent, the root importer is used.
+   */
+  readonly workspace?: string | undefined
 }

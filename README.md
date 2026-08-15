@@ -33,6 +33,18 @@ The CLI is a thin adapter over the shared core operations. Run `nub run cli -- -
 from this repository, or `effect-lens --help` from a checked-out project. See
 `docs/cli.md` for details.
 
+### Monorepo workspace resolution
+
+In a pnpm monorepo the lockfile lives at the repository root while Effect may
+be declared in a workspace package. Pass `--workspace <pkg>` (relative to
+`--project`) to the resolution-based commands (`doctor`, `drift`,
+`setup --dry-run`, `packs plan`) to resolve that package's Effect version from
+the root lockfile and select the exact reference pack. The target may be the
+full importer path (`packages/foldkit`) or the final path segment (`foldkit`);
+an ambiguous basename and an unmatched target are reported as blocking errors.
+Single-package repositories are unaffected and need no extra flags. See
+`docs/cli.md` for the full precedence rules.
+
 ## Development
 
 This repository uses **Nub** (pinned `0.7.5`, declared in the `packageManager`

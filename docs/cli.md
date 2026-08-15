@@ -36,10 +36,50 @@ requires Node 23.6+ (or Node 22.6+ with `--experimental-strip-types`, which the
 | Option                | Description                                                                                        |
 | --------------------- | -------------------------------------------------------------------------------------------------- |
 | `-p, --project <dir>` | Project directory to inspect (default: current directory).                                         |
+| `--workspace <pkg>`   | Explicit workspace/package target relative to `--project` (monorepos).                             |
 | `-c, --cache <dir>`   | Reference-pack cache directory (default: `$XDG_CACHE_HOME/effect-lens` or `~/.cache/effect-lens`). |
 | `-j, --json`          | Emit machine-readable JSON instead of human-readable text.                                         |
 | `-h, --help`          | Print usage.                                                                                       |
 | `-v, --version`       | Print the version.                                                                                 |
+
+## Workspace target selection and resolution precedence
+
+Effect Lens inspects a single project at a time. In a pnpm monorepo the
+lockfile lives at the repository root while Effect may be declared in a
+workspace package, so the root importer does not necessarily own Effect. Use
+`--workspace` to select the package to resolve:
+
+```sh
+effect-lens doctor --project . --workspace packages/foldkit --cache ~/.cache/effect-lens
+```
+
+`--project` is always the repository root (the lockfile and configuration
+boundary). `--workspace` selects a package relative to that root and is used by
+the resolution-based commands (`doctor`, `drift`, `setup --dry-run`, and
+`packs plan`); `check` and `hooks` are unaffected because they do not resolve
+the Effect dependency.
+
+Resolution precedence for the _expected_ Effect identity:
+
+1. The workspace target's matching root-lockfile importer (when `--workspace`
+   is given), else the root importer — both only from a supported lockfile.
+2. The workspace target's `package.json` (when targeted), else the root
+   `package.json`, as the declared-intent fallback.
+
+The installed `node_modules/effect/package.json` is used only for
+verification, never as the source of the expected identity.
+
+A workspace target may be given as the full importer path
+(`packages/foldkit` or `./packages/foldkit`) or as the final path segment
+(`foldkit`). When the basename is ambiguous (two packages share it), resolution
+fails with a blocking `workspace-ambiguous` error and lists the matching
+importers so you can disambiguate with the full path. A target that matches no
+importer is a blocking `workspace-unresolved` error. A monorepo with no
+`--workspace` resolves against the root importer exactly as a single-package
+repository does, preserving existing behaviour.
+
+Multiple Effect versions can coexist in one repository; the target's exact
+version selects the matching reference pack.
 
 ## Exit codes
 

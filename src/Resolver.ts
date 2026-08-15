@@ -50,6 +50,10 @@ export type LockfileKind = Schema.Schema.Type<typeof LockfileKind>
  * - `unsupported-lockfile` — a lockfile exists but is not supported; expected
  *   identity came from `package.json`.
  * - `missing` — no `effect` dependency is declared in any committed metadata.
+ * - `workspace-ambiguous` — a requested workspace target matches more than one
+ *   lockfile importer.
+ * - `workspace-unresolved` — a requested workspace target matches no supported
+ *   lockfile importer.
  *
  * @since 0.0.0
  */
@@ -58,9 +62,26 @@ export const ResolutionStatus = Schema.Literals([
   "installed-mismatch",
   "missing-lockfile",
   "unsupported-lockfile",
-  "missing"
+  "missing",
+  "workspace-ambiguous",
+  "workspace-unresolved"
 ])
 export type ResolutionStatus = Schema.Schema.Type<typeof ResolutionStatus>
+
+/**
+ * Options controlling how the expected Effect identity is resolved.
+ *
+ * `workspace` selects an explicit workspace/package target within a monorepo.
+ * The repository root (`projectDir`) remains the lockfile and configuration
+ * boundary; the target supplies the package manifest and the matching root
+ * lockfile importer. When omitted, the root importer (single-package
+ * behaviour) is used.
+ *
+ * @since 0.0.0
+ */
+export interface ResolveOptions {
+  readonly workspace?: string | undefined
+}
 
 /**
  * The result of resolving a project's Effect dependency identity.
@@ -103,12 +124,19 @@ export const makeResolution = (args: {
 /**
  * Parses an npm `package-lock.json` (v2/v3) and returns the direct `effect`
  * package identity, or `null` when the lockfile has no direct `effect` entry.
- * Only a dependency declared at the root (`packages[""]`) is treated as the
- * project's direct `effect`; a transitive hoisted copy is not.
+ * Without `workspacePath`, only a dependency declared at the root
+ * (`packages[""]`) is treated as the project's direct `effect`; a transitive
+ * hoisted copy is not. With `workspacePath`, the matching workspace entry
+ * (e.g. `packages/foldkit`) supplies the direct specifier and the resolved
+ * effect entry is located workspace-locally (then root-hoisted) so the exact
+ * version is not assumed to live at the root.
  *
  * @since 0.0.0
  */
-export const parsePackageLock = (content: string): PackageIdentity | null => {
+export const parsePackageLock = (
+  content: string,
+  workspacePath?: string
+): PackageIdentity | null => {
   let data: unknown
   try {
     data = JSON.parse(content)
@@ -117,21 +145,25 @@ export const parsePackageLock = (content: string): PackageIdentity | null => {
   }
   const packages = (data as { packages?: Record<string, unknown> })?.packages
   if (!packages || typeof packages !== "object") return null
-  const root = packages[""] as
+  const isWorkspace = workspacePath !== undefined && workspacePath !== ""
+  const entryKey = isWorkspace ? normalizeWorkspace(workspacePath) : ""
+  const entry = packages[entryKey] as
     | { dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> }
     | undefined
+  if (!entry || typeof entry !== "object") return null
   const rootDeps = {
-    ...root?.dependencies,
-    ...root?.devDependencies
+    ...entry.dependencies,
+    ...entry.devDependencies
   }
   if (typeof rootDeps.effect !== "string") return null
-  const entry = packages["node_modules/effect"] as
+  const effectKey = isWorkspace ? `${entryKey}/node_modules/effect` : "node_modules/effect"
+  const effectEntry = (packages[effectKey] ?? packages["node_modules/effect"]) as
     | { version?: unknown; integrity?: unknown }
     | undefined
-  if (!entry || typeof entry !== "object") return null
-  const version = entry.version
+  if (!effectEntry || typeof effectEntry !== "object") return null
+  const version = effectEntry.version
   if (typeof version !== "string" || version === "") return null
-  const integrity = typeof entry.integrity === "string" ? entry.integrity : null
+  const integrity = typeof effectEntry.integrity === "string" ? effectEntry.integrity : null
   return makePackageIdentity({ name: "effect", version, source: "lockfile", integrity })
 }
 
@@ -162,22 +194,24 @@ export const isParseablePnpmLock = (content: string): boolean => {
 }
 
 /**
- * Parses a `pnpm-lock.yaml` and returns the direct `effect` package identity,
- * or `null` when the lockfile has no `effect` entry. Uses a minimal YAML
- * subset parser sufficient for the lockfile shape; duplicate keys (which pnpm
- * emits for a package's `resolution` and `dependencies` blocks) are merged.
+ * Parses a `pnpm-lock.yaml` and returns the direct `effect` package identity
+ * for a given importer key, or `null` when that importer has no `effect`
+ * entry. `importerKey` defaults to `"."` (the root importer), preserving
+ * single-package behaviour. Uses a minimal YAML subset parser sufficient for
+ * the lockfile shape; duplicate keys (which pnpm emits for a package's
+ * `resolution` and `dependencies` blocks) are merged.
  *
  * @since 0.0.0
  */
-export const parsePnpmLock = (content: string): PackageIdentity | null => {
+export const parsePnpmLock = (content: string, importerKey = "."): PackageIdentity | null => {
   const parsed = parseYamlSubset(content)
   const importers = parsed.importers
   if (!importers || typeof importers !== "object") return null
-  const root = (importers as Record<string, unknown>)["."]
-  if (!root || typeof root !== "object") return null
+  const importer = (importers as Record<string, unknown>)[importerKey]
+  if (!importer || typeof importer !== "object") return null
   const deps = {
-    ...((root as Record<string, unknown>).dependencies as Record<string, unknown> | undefined),
-    ...((root as Record<string, unknown>).devDependencies as Record<string, unknown> | undefined)
+    ...(importer as Record<string, unknown>).dependencies as Record<string, unknown> | undefined,
+    ...(importer as Record<string, unknown>).devDependencies as Record<string, unknown> | undefined
   }
   const effect = deps.effect
   if (!effect || typeof effect !== "object") return null
@@ -197,6 +231,67 @@ export const parsePnpmLock = (content: string): PackageIdentity | null => {
     }
   }
   return makePackageIdentity({ name: "effect", version, source: "lockfile", integrity })
+}
+
+/**
+ * Lists the importer keys of a parseable `pnpm-lock.yaml` (empty when there is
+ * no `importers` section or it is not an object).
+ *
+ * @since 0.0.0
+ */
+export const pnpmImporterKeys = (content: string): Array<string> => {
+  const parsed = parseYamlSubset(content)
+  const importers = parsed.importers
+  if (!importers || typeof importers !== "object") return []
+  return Object.keys(importers as Record<string, unknown>)
+}
+
+/**
+ * Normalises a workspace target to a lockfile-relative path: strips a leading
+ * `./` and trailing slashes. The root ("." or "") is left as-is so callers can
+ * distinguish "no target" from a root-targeting value.
+ *
+ * @since 0.0.0
+ */
+export const normalizeWorkspace = (workspace: string): string =>
+  workspace.replace(/^\.\//, "").replace(/\/+$/, "")
+
+/**
+ * Resolves a workspace target to a pnpm importer key.
+ *
+ * Matching precedence:
+ * 1. An exact importer path (e.g. `packages/foldkit` or `./packages/foldkit`).
+ * 2. For a single-segment target (no `/`), a basename match against the final
+ *    path segment (e.g. `foldkit` matches `packages/foldkit`).
+ *
+ * Returns the single matched key, an `{ ambiguous }` result when more than one
+ * importer matches, or `null` when nothing matches. The root importer is
+ * never a workspace target. A multi-segment target (`tools/kit`) only matches
+ * an exact importer path; it never falls back to a basename match (which would
+ * wrongly collide with `apps/kit`).
+ *
+ * @since 0.0.0
+ */
+export const matchPnpmImporter = (
+  content: string,
+  workspace: string
+): { key: string } | { ambiguous: Array<string> } | null => {
+  const normalized = normalizeWorkspace(workspace)
+  if (normalized === "" || normalized === ".") return null
+  const keys = pnpmImporterKeys(content).filter((key) => key !== ".")
+  const exact = keys.filter(
+    (key) => key === normalized || key === `./${normalized}`
+  )
+  if (exact.length === 1) return { key: exact[0] }
+  if (exact.length > 1) return { ambiguous: exact }
+  // Basename matching only for single-segment targets so `tools/kit` never
+  // collides with a different `.../kit` importer.
+  if (!normalized.includes("/")) {
+    const fuzzy = keys.filter((key) => key.split("/").pop() === normalized)
+    if (fuzzy.length === 1) return { key: fuzzy[0] }
+    if (fuzzy.length > 1) return { ambiguous: fuzzy }
+  }
+  return null
 }
 
 /**
@@ -257,42 +352,83 @@ export const detectLockfile = (projectDir: string): LockfileKind => {
 }
 
 /**
- * Reads the installed `effect` package identity from
- * `node_modules/effect/package.json`, or `null` when it is absent or invalid.
+ * Reads the installed `effect` package identity. Without a workspace target,
+ * reads from `node_modules/effect/package.json` at the project root. With a
+ * target, prefers the workspace-local `node_modules/effect/package.json` (at
+ * `workspaceDir`, a concrete lockfile-relative path) and falls back to the
+ * root-hoisted copy. Returns `null` when absent or invalid.
  *
  * @since 0.0.0
  */
-export const readInstalledEffect = (projectDir: string): PackageIdentity | null => {
-  const path = join(projectDir, "node_modules", "effect", "package.json")
-  if (!existsSync(path)) return null
-  let content: string
-  try {
-    content = readFileSync(path, "utf8")
-  } catch {
-    return null
+export const readInstalledEffect = (
+  projectDir: string,
+  workspaceDir?: string
+): PackageIdentity | null => {
+  const candidates = workspaceDir === undefined
+    ? [join(projectDir, "node_modules", "effect", "package.json")]
+    : [
+      join(projectDir, workspaceDir, "node_modules", "effect", "package.json"),
+      join(projectDir, "node_modules", "effect", "package.json")
+    ]
+  for (const path of candidates) {
+    if (!existsSync(path)) continue
+    let content: string
+    try {
+      content = readFileSync(path, "utf8")
+    } catch {
+      continue
+    }
+    const parsed = parseInstalledPackageJson(content)
+    if (parsed !== null) return parsed
   }
-  return parseInstalledPackageJson(content)
+  return null
 }
 
 /**
  * Resolves the project's expected Effect package identity from committed
  * metadata and verifies it against the installed package.
  *
+ * With no `workspace` option, the root importer of the project's lockfile is
+ * used (single-package behaviour). With a `workspace` target, the repository
+ * root (`projectDir`) remains the lockfile/configuration boundary and the
+ * matching root-lockfile importer for the target is resolved; the target's
+ * own `package.json` is the fallback when the lockfile has no effect entry.
+ * When the target matches no single importer (`workspace-ambiguous` /
+ * `workspace-unresolved`), no `package.json` fallback is performed so the
+ * failure is surfaced rather than masked by a guessed manifest.
+ *
  * @since 0.0.0
  */
-export const resolveEffectIdentity = (projectDir: string): Resolution => {
+export const resolveEffectIdentity = (
+  projectDir: string,
+  options: ResolveOptions = {}
+): Resolution => {
+  const workspace = options.workspace
   const lockfile = detectLockfile(projectDir)
-  const installed = readInstalledEffect(projectDir)
 
   let expected: PackageIdentity | null = null
   let detail: string | null = null
   let lockfileUnparseable = false
+  // The concrete lockfile-relative directory used for installed and manifest
+  // reads. Starts from the raw target and is replaced by the matched importer
+  // key when one is found, so a basename target reads the importer's tree.
+  let workspaceDir: string | undefined = workspace === undefined
+    ? undefined
+    : normalizeWorkspace(workspace)
+  let workspaceFailure: { kind: "ambiguous" | "unresolved"; detail: string } | null = null
 
   if (lockfile === "package-lock") {
     const content = readFileSync(join(projectDir, "package-lock.json"), "utf8")
     if (isParseablePackageLock(content)) {
-      expected = parsePackageLock(content)
-      if (!expected) detail = "package-lock.json present but no direct effect entry found"
+      if (workspace !== undefined) {
+        expected = parsePackageLock(content, workspaceDir)
+        if (!expected) {
+          detail = `package-lock.json has no direct effect entry for workspace "${workspace}"`
+        }
+      } else {
+        expected = parsePackageLock(content)
+        if (!expected) detail = "package-lock.json present but no direct effect entry found"
+      }
     } else {
       lockfileUnparseable = true
       detail = "package-lock.json present but could not be parsed"
@@ -300,23 +436,57 @@ export const resolveEffectIdentity = (projectDir: string): Resolution => {
   } else if (lockfile === "pnpm-lock") {
     const content = readFileSync(join(projectDir, "pnpm-lock.yaml"), "utf8")
     if (isParseablePnpmLock(content)) {
-      expected = parsePnpmLock(content)
-      if (!expected) detail = "pnpm-lock.yaml present but no effect entry found"
+      if (workspace !== undefined) {
+        const match = matchPnpmImporter(content, workspace)
+        if (match === null) {
+          workspaceFailure = {
+            kind: "unresolved",
+            detail: `workspace target "${workspace}" does not match any importer in pnpm-lock.yaml`
+          }
+        } else if ("ambiguous" in match) {
+          workspaceFailure = {
+            kind: "ambiguous",
+            detail: `workspace target "${workspace}" is ambiguous; matches ${
+              match.ambiguous.join(", ")
+            }`
+          }
+        } else {
+          workspaceDir = match.key
+          expected = parsePnpmLock(content, match.key)
+          if (!expected) {
+            detail = `pnpm-lock.yaml importer "${match.key}" has no effect entry`
+          }
+        }
+      } else {
+        expected = parsePnpmLock(content)
+        if (!expected) detail = "pnpm-lock.yaml present but no effect entry found"
+      }
     } else {
       lockfileUnparseable = true
       detail = "pnpm-lock.yaml present but could not be parsed (unsupported shape)"
     }
   }
 
-  if (!expected) {
-    const packageJsonPath = join(projectDir, "package.json")
+  const installed = readInstalledEffect(projectDir, workspaceDir)
+
+  // Fallback: the target workspace manifest (when targeted) else the root
+  // package.json. This preserves the declared-intent fallback for a target
+  // whose lockfile importer owns no effect entry. It is skipped when the
+  // workspace target itself failed to resolve, so an invalid/ambiguous target
+  // is never masked by a guessed manifest.
+  if (workspaceFailure === null && !expected) {
+    const manifestDir = workspaceDir !== undefined ? join(projectDir, workspaceDir) : projectDir
+    const packageJsonPath = join(manifestDir, "package.json")
     if (existsSync(packageJsonPath)) {
       expected = parsePackageJson(readFileSync(packageJsonPath, "utf8"))
     }
   }
 
   let status: ResolutionStatus
-  if (!expected) {
+  if (workspaceFailure !== null) {
+    status = workspaceFailure.kind === "ambiguous" ? "workspace-ambiguous" : "workspace-unresolved"
+    detail = workspaceFailure.detail
+  } else if (!expected) {
     status = "missing"
     detail = detail ?? "no effect dependency declared in lockfile or package.json"
   } else if (lockfile === "yarn-lock" || lockfile === "bun-lock") {

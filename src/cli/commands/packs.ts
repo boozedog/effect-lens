@@ -32,12 +32,15 @@ import type { CliContext, CliResult } from "../types.ts"
  *
  * @since 0.0.0
  */
-export const packsPlan = (context: CliContext & { catalogDir: string }): CliResult => {
+export const packsPlan = (
+  context: CliContext & { catalogDir: string }
+): CliResult => {
   const catalog = PackPlan.loadPackCatalog(context.catalogDir)
   const plan = PackPlan.planPackAcquisition({
     projectDir: context.projectDir,
     cacheDir: context.cacheDir,
-    catalog
+    catalog,
+    workspace: context.workspace
   })
   const machineOutput = makeMachineOutput({
     status: aggregateStatus({ findings: [], diagnostics: plan.diagnostics }),
