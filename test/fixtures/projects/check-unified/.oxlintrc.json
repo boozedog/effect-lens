@@ -1,0 +1,7 @@
+{
+  "rules": { "no-console": "error", "no-unused-vars": "off" },
+  "ignorePatterns": ["ignored/**"],
+  "overrides": [
+    { "files": ["src/override.ts"], "rules": { "no-console": "off" } }
+  ]
+}

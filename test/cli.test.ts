@@ -140,6 +140,37 @@ describe("CLI check", () => {
     expect(json.machineOutput.status).toBe(2)
     expect(json.machineOutput.findings.length).toBeGreaterThan(0)
   })
+
+  it("exits 2 for an invalid --mode value", () => {
+    const { stderr, status } = runCli([
+      "check",
+      "--project",
+      project("check-unified"),
+      "--cache",
+      cacheDir,
+      "--mode",
+      "unify"
+    ])
+    expect(status).toBe(2)
+    expect(stderr).toContain("invalid --mode")
+  })
+
+  it("accepts --mode unified and reports the mode and config source in JSON", () => {
+    const { stdout, status } = runCli([
+      "check",
+      "--project",
+      project("check-unified"),
+      "--cache",
+      cacheDir,
+      "--mode",
+      "unified",
+      "--json"
+    ])
+    expect(status).toBe(2)
+    const json = JSON.parse(stdout) as { oxlint: { mode: string; config: string } }
+    expect(json.oxlint.mode).toBe("unified")
+    expect(json.oxlint.config).toBe("project")
+  })
 })
 
 describe("CLI setup", () => {

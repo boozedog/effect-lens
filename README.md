@@ -86,10 +86,20 @@ serialization definitions.
 
 On top of those contracts sit the adapter-independent read-only operations in
 `src/operations/`: `lookup` (search ingested guidance with provenance and
-version applicability), `review` (map oxlint diagnostics to stable findings),
-and `design` (combine analysis facts with guidance into advisory advice with
-confidence). They centralize policy and analysis logic so no surface adapter
-duplicates it. See `docs/contracts.md` for the operation contracts.
+version applicability), `review` (normalize oxlint diagnostics through the rule
+provider seam into stable findings), and `design` (combine analysis facts with
+guidance into advisory advice with confidence). They centralize policy and
+analysis logic so no surface adapter duplicates it. See `docs/contracts.md` for
+the operation contracts.
+
+`check` is a configurable unified gate foundation. It normalizes toolchain
+diagnostics through registered rule providers (`src/provider/`); the Lens
+strict rules are the first provider. `check` runs in two modes: `lens-only`
+(default, preserving the existing single-package behavior) and `unified` (a
+config-preserving gate that loads the target repository's oxlint config —
+ignores, overrides, and rule settings — while loading the Lens rules, and
+surfaces unknown project diagnostics as visible warnings). See `docs/cli.md`
+for the modes and configuration precedence.
 
 ## Reference-pack acquisition planning
 

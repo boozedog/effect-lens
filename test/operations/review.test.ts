@@ -79,6 +79,40 @@ describe("review", () => {
     expect(result.status).toBe(0)
   })
 
+  it("surfaces unrecognized diagnostics with their raw severity in unified mode", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [diag({ code: "eslint(no-console)", severity: "error", line: 7 })]
+      }),
+      mode: "unified"
+    })
+    expect(result.findings).toEqual([])
+    expect(result.diagnostics).toHaveLength(1)
+    expect(result.diagnostics[0].severity).toBe("error")
+    expect(result.diagnostics[0].message).toContain("eslint(no-console)")
+    expect(Option.isSome(result.diagnostics[0].location)).toBe(true)
+  })
+
+  it("preserves a warning severity for unrecognized diagnostics in unified mode", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [diag({ code: "eslint(no-console)", severity: "warning", line: 7 })]
+      }),
+      mode: "unified"
+    })
+    expect(result.diagnostics[0].severity).toBe("warning")
+  })
+
+  it("keeps unrecognized diagnostics as off notes in lens-only mode (default)", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [diag({ code: "eslint(no-console)", severity: "error", line: 7 })]
+      })
+    })
+    expect(result.diagnostics[0].severity).toBe("off")
+    expect(result.status).toBe(0)
+  })
+
   it("returns ok for an empty input", () => {
     const result = Review.review({ input: Review.makeReviewInput({ diagnostics: [] }) })
     expect(result.findings).toEqual([])

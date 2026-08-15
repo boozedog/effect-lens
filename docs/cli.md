@@ -46,6 +46,7 @@ requires Node 23.6+ (or Node 22.6+ with `--experimental-strip-types`, which the
 | `--registry <url>`    | Registry endpoint (freshness only; default `https://registry.npmjs.org`).                          |
 | `--exclude <ver>`     | Exclude a version from recommendation (freshness only; repeatable).                                |
 | `-j, --json`          | Emit machine-readable JSON instead of human-readable text.                                         |
+| `--mode <mode>`       | Check gate mode: `lens-only` (default) or `unified` (check only).                                  |
 | `-h, --help`          | Print usage.                                                                                       |
 | `-v, --version`       | Print the version.                                                                                 |
 
@@ -130,10 +131,14 @@ compatibility.
 ### `effect-lens check`
 
 Runs the available local read-only review path and aggregates findings and
-diagnostics into a `MachineOutput`.
+diagnostics into a `MachineOutput`. `check` is a configurable unified gate
+foundation: it normalizes toolchain diagnostics through registered rule
+providers (the Lens strict rules are the first provider) and surfaces the
+result as stable findings and diagnostics.
 
 ```sh
 effect-lens check --project . --cache ~/.cache/effect-lens --path src
+effect-lens check --project . --cache ~/.cache/effect-lens --mode unified --path src
 ```
 
 `check` runs oxlint (with the Lens plugin loaded) over the target path, feeds
@@ -141,6 +146,53 @@ the JSON diagnostics into the shared-core `review` operation, and aggregates
 the resulting findings. `--path` is resolved relative to `--project` and
 defaults to the project directory. If oxlint is unavailable or fails, a warning
 diagnostic is emitted instead of crashing.
+
+#### Gate modes
+
+`check` supports two gate modes, selected with `--mode`:
+
+- **`lens-only`** (default) — preserves the existing single-package Lens
+  behavior. A fresh scratch oxlint config loads the Lens rules and the standard
+  correctness/suspicious/perf categories. The target repository's own oxlint
+  config is not consulted, and diagnostics that no provider recognizes are
+  surfaced as advisory `off` notes that do not affect the exit status.
+- **`unified`** — a config-preserving gate. The target repository's oxlint
+  config (`.oxlintrc.json`, `.oxlintrc`, or `oxlint.json`) is loaded and
+  composed with the Lens plugin and rules, so the project's ignores, overrides,
+  categories, and rule settings are preserved while the Lens rules are loaded.
+  Diagnostics that no provider recognizes are surfaced as visible diagnostics
+  with their raw oxlint severity (never silently dropped as `off`), so unknown
+  project diagnostics are visible in the gate.
+
+#### Configuration precedence (unified mode)
+
+In `unified` mode the composed config preserves the project's settings and
+adds the Lens rules without overriding them:
+
+1. The project's own oxlint config is the base: its `ignorePatterns`,
+   `overrides`, `categories`, and `rules` are preserved verbatim.
+2. The Lens plugin is appended to `jsPlugins` (deduplicated by resolved path)
+   when the project does not already load it.
+3. Each Lens rule that the project does not already set is added at its catalog
+   severity. A project rule setting (including `off`) is never overridden.
+
+When the project has no oxlint config, `unified` mode falls back to the same
+built-in config as `lens-only`. When the project config cannot be parsed, a
+`check-config-unparseable` warning diagnostic is emitted and the built-in
+config is used rather than crashing. An invalid `--mode` value (anything other
+than `lens-only` or `unified`) is rejected with exit `2`.
+
+#### Read-only guarantee
+
+`check` is read-only in both modes. In `lens-only` mode the scratch config is
+written to the OS temp directory. In `unified` mode the composed config is
+written to a transient `.effect-lens-check-oxlintrc-<pid>-<ts>.json` file in
+the project directory (a unique name avoids collisions between concurrent
+runs) so relative ignore/override/plugin paths resolve correctly, and it is
+removed in a `finally` block — it is never left behind and the project's own
+config is never modified. If the transient file cannot be written (for example
+a read-only project directory), a warning diagnostic is emitted instead of
+crashing.
 
 ### `effect-lens setup --dry-run`
 
@@ -330,7 +382,9 @@ A missing candidate pack is reported as an actionable `catalog-missing` /
   offline; `freshness` requires network access to the registry and reports a
   `network-error` result when the fetch fails.
 - `check` writes a temporary oxlint config to the OS temp directory and removes
-  it afterwards; it never writes into the project.
+  it afterwards; in `unified` mode it writes a transient composed config into
+  the project directory and removes it in a `finally` block, never leaving an
+  artifact and never modifying the project's own config.
 - `setup --dry-run` and `hooks status` never write hook files, oxlint config,
   dependencies, or packs.
 - `packs plan`, `packs status`, and `freshness` never write, delete, or update
@@ -350,7 +404,9 @@ check passes; it never touches project configuration.
   explicitly.
 - `check` runs the Lens strict rules and the standard correctness/suspicious
   categories. It does not yet run the full `lookup`/`design`/state-pressure
-  analysis surfaces.
+  analysis surfaces. First-party project providers (Foldkit, StyleX) are not
+  yet registered; the provider seam is in place and the Lens rules are the
+  first provider.
 - `setup --apply` and `hooks install|uninstall` mutate only the `hk` hook
   manager (`hk.pkl`); creating a `hk.pkl` from scratch (run `hk init` first)
   and mutating the other hook managers are out of scope for this slice.

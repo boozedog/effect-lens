@@ -1176,10 +1176,17 @@ silently used. A query with no matches emits a `lookup-no-matches` diagnostic.
 ### `review` — src/operations/review.ts
 
 Maps oxlint diagnostics to stable Lens `Finding` values and summarises them. It
-reuses the existing rule catalog and the `toFinding` seam — it does not
-duplicate rule policy. Diagnostics whose rule id is not in the Lens catalog are
-never coerced into Lens findings; they are surfaced as non-rule `Diagnostic`
-values.
+normalizes each raw diagnostic through the registered rule providers (the Lens
+strict rules are the first provider) and maps the normalized diagnostics to
+stable `Finding` values. Diagnostics that no provider recognizes are never
+coerced into Lens findings; they are surfaced as non-rule `Diagnostic` values.
+
+`review` accepts an optional `mode` (`lens-only` default | `unified`) and an
+optional `providers` list. In `lens-only` mode unrecognized diagnostics are
+advisory `off` notes; in `unified` mode they are surfaced as visible
+diagnostics with their raw oxlint severity (an `error` project rule stays
+blocking, a `warning` stays advisory) so unknown project diagnostics are never
+silently dropped.
 
 #### `OxlintDiagnostic`
 
@@ -1221,7 +1228,74 @@ The Schema-backed counterpart of the `OxlintDiagnostic` interface in
 
 `status` is the aggregate `ExitStatus` derived from findings only: any `error`
 → `2`, else any `warning` → `1`, else `0`. Non-catalog diagnostics are `off`
-notes and do not change the status.
+notes in `lens-only` mode and do not change the status; in `unified` mode they
+are surfaced with their raw severity and the caller's `aggregateStatus` (see
+`ExitStatus`) reflects them in the exit code.
+
+## Rule provider seam — src/provider/
+
+The unified `check` gate normalizes toolchain diagnostics through registered
+rule providers. A provider owns a set of rule ids and normalizes a raw
+diagnostic into a `ProviderDiagnostic` that carries provider identity and
+provenance. The Lens strict rules are the first provider; first-party project
+providers (Foldkit, StyleX) are a later slice and register through the same
+seam without changing the `review` operation.
+
+### `ProviderDiagnostic`
+
+A normalized diagnostic with provider provenance.
+
+```json
+{
+  "provider": "lens",
+  "rule": "lens/no-async-function | null",
+  "severity": "error | warning | off",
+  "message": "Avoid async functions",
+  "location": { "file": "src/service.ts", "line": 14, "column": 3, "snippet": null },
+  "code": "lens(no-async-function)",
+  "source": "lens-strict",
+  "evidence": []
+}
+```
+
+`provider` is the stable provider identity that produced the diagnostic;
+`rule` is the provider's rule id when the diagnostic maps to a rule, or `null`
+for a non-rule diagnostic. `source` and `evidence` are supplied by the provider
+so a non-Lens provider can carry its own provenance and evidence without the
+`review` operation re-deriving them from the Lens catalog.
+
+### `RuleProvider`
+
+```ts
+interface RuleProvider {
+  readonly id: string
+  readonly title: string
+  readonly ruleIds: ReadonlyArray<string>
+  readonly recognizes: (code: string) => boolean
+  readonly normalize: (diagnostic: RawDiagnostic, index: number) => ProviderDiagnostic | null
+}
+```
+
+`recognizes` decides whether the provider owns a raw diagnostic `code`;
+`normalize` converts a recognized raw diagnostic into a `ProviderDiagnostic`
+(or `null` when it does not recognize it). `src/provider/lens.ts` exports the
+`lensProvider`; `src/provider/registry.ts` exports `ProviderRegistry` (which
+resolves a raw diagnostic to the first provider that recognizes it) and
+`defaultRegistry` (the Lens provider registered).
+
+### `CheckMode`
+
+```json
+"lens-only" | "unified"
+```
+
+- `lens-only` (default) — preserves the existing single-package Lens behavior:
+  a fresh scratch config loads the Lens rules, and unrecognized diagnostics are
+  advisory `off` notes.
+- `unified` — a config-preserving gate: the target repository's oxlint config
+  (ignores, overrides, rule settings) is preserved while the Lens rules are
+  loaded, and unrecognized project diagnostics are surfaced as visible
+  `warning` diagnostics.
 
 ### `design` — src/operations/design.ts
 

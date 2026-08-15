@@ -9,6 +9,10 @@
  * @since 0.0.0
  */
 import { describe, expect, it } from "@effect/vitest"
+import * as Option from "effect/Option"
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { check } from "../src/cli/commands/check.ts"
 import { doctor } from "../src/cli/commands/doctor.ts"
@@ -21,6 +25,7 @@ const cacheStaleDir = fileURLToPath(new URL("./fixtures/cache-stale", import.met
 const cachePartialDir = fileURLToPath(new URL("./fixtures/cache-partial", import.meta.url))
 const cacheMonoDir = fileURLToPath(new URL("./fixtures/cache-mono", import.meta.url))
 const monorepo = fileURLToPath(new URL("./fixtures/projects/monorepo", import.meta.url))
+const unifiedProject = fileURLToPath(new URL("./fixtures/projects/check-unified", import.meta.url))
 
 describe("doctor", () => {
   it("reports a resolved project with a complete pack as ok", () => {
@@ -262,5 +267,91 @@ describe("check", () => {
     expect(
       result.machineOutput.diagnostics.some((d) => d.id === "check-oxlint-unavailable")
     ).toBe(false)
+  })
+
+  it("unified mode preserves project ignore/override behavior while loading Lens rules", () => {
+    const result = check({ projectDir: unifiedProject, cacheDir, mode: "unified" })
+    // The Lens rule is loaded and fires on src/a.ts.
+    expect(
+      result.machineOutput.findings.some((f) => f.rule === "lens/no-async-function")
+    ).toBe(true)
+    // ignored/b.ts is not linted (the project ignore is preserved).
+    expect(
+      result.machineOutput.findings.some((f) => f.location.file.includes("ignored/b.ts"))
+    ).toBe(false)
+    // src/override.ts no-console is overridden off (no diagnostic for it).
+    expect(
+      result.machineOutput.diagnostics.some((d) =>
+        Option.getOrNull(d.location)?.file.includes("override.ts")
+      )
+    ).toBe(false)
+    const json = result.json as { oxlint: { config: string; mode: string } }
+    expect(json.oxlint.config).toBe("project")
+    expect(json.oxlint.mode).toBe("unified")
+  })
+
+  it("unified mode preserves the project override (no-console off for src/override.ts)", () => {
+    const result = check({
+      projectDir: unifiedProject,
+      cacheDir,
+      mode: "unified",
+      path: "src/override.ts"
+    })
+    expect(result.machineOutput.findings).toHaveLength(0)
+    expect(result.machineOutput.diagnostics).toHaveLength(0)
+  })
+
+  it("emits a warning for an unparseable project config in unified mode", () => {
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-badcfg-"))
+    writeFileSync(join(dir, ".oxlintrc.json"), "not json")
+    try {
+      const result = check({ projectDir: dir, cacheDir, mode: "unified" })
+      expect(
+        result.machineOutput.diagnostics.some((d) => d.id === "check-config-unparseable")
+      ).toBe(true)
+      const json = result.json as { oxlint: { config: string } }
+      expect(json.oxlint.config).toBe("builtin")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("unified mode human output surfaces a visible unknown diagnostic", () => {
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-human-"))
+    writeFileSync(
+      join(dir, ".oxlintrc.json"),
+      JSON.stringify({ rules: { "no-console": "error" } })
+    )
+    mkdirSync(join(dir, "src"))
+    writeFileSync(join(dir, "src", "plain.ts"), "console.log(\"x\")\n")
+    try {
+      const result = check({ projectDir: dir, cacheDir, mode: "unified" })
+      expect(result.human.join("\n")).toContain(
+        "diagnostic not in any provider catalog: eslint(no-console)"
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("unified mode is read-only: no transient config left behind, project config unchanged", () => {
+    const configPath = join(unifiedProject, ".oxlintrc.json")
+    const before = readFileSync(configPath, "utf8")
+    check({ projectDir: unifiedProject, cacheDir, mode: "unified" })
+    const leftovers = readdirSync(unifiedProject).filter((f) =>
+      f.startsWith(".effect-lens-check-oxlintrc-")
+    )
+    expect(leftovers).toEqual([])
+    expect(readFileSync(configPath, "utf8")).toBe(before)
+  })
+
+  it("lens-only mode uses the builtin config and does not preserve project ignores", () => {
+    const result = check({ projectDir: unifiedProject, cacheDir, mode: "lens-only" })
+    // ignored/b.ts IS linted in lens-only mode (the builtin config has no such ignore).
+    expect(
+      result.machineOutput.findings.some((f) => f.location.file.includes("ignored/b.ts"))
+    ).toBe(true)
+    const json = result.json as { oxlint: { config: string } }
+    expect(json.oxlint.config).toBe("builtin")
   })
 })

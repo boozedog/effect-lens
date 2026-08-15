@@ -4,9 +4,13 @@
  *
  * Check runs oxlint (with the Lens plugin loaded) over the target path, feeds
  * the JSON diagnostics into the shared-core `review` operation, and aggregates
- * the resulting findings and diagnostics. It is read-only: it never mutates
- * source, caches, or configuration. If oxlint is unavailable, a diagnostic is
- * emitted instead of crashing.
+ * the resulting findings and diagnostics. In `lens-only` mode (the default) a
+ * fresh scratch config is used; in `unified` mode the target repository's
+ * oxlint config is preserved while the Lens rules are loaded. It is read-only:
+ * it never mutates source, caches, or the project's own configuration (in
+ * `unified` mode it writes a transient sidecar config that is removed in a
+ * `finally` block). If oxlint is unavailable, a diagnostic is emitted instead
+ * of crashing.
  *
  * @since 0.0.0
  */
@@ -15,6 +19,7 @@ import { aggregateStatus, MachineOutput, makeMachineOutput } from "../../ExitSta
 import type { Diagnostic } from "../../Finding.ts"
 import * as Review from "../../operations/review.ts"
 import { makeDiagnostic } from "../../operations/shared.ts"
+import { type CheckMode, DEFAULT_CHECK_MODE } from "../../provider/Provider.ts"
 import { encode } from "../encode.ts"
 import { runOxlint } from "../oxlint.ts"
 import type { CliResult } from "../types.ts"
@@ -28,11 +33,13 @@ export const check = (args: {
   projectDir: string
   cacheDir: string
   path?: string
+  mode?: CheckMode
 }): CliResult => {
+  const mode = args.mode ?? DEFAULT_CHECK_MODE
   const target = args.path === undefined
     ? args.projectDir
     : resolve(args.projectDir, args.path)
-  const oxlint = runOxlint({ projectDir: args.projectDir, target })
+  const oxlint = runOxlint({ projectDir: args.projectDir, target, mode })
   const diagnostics: Array<Diagnostic> = []
   if (oxlint.error !== null) {
     diagnostics.push(
@@ -43,8 +50,18 @@ export const check = (args: {
       })
     )
   }
+  if (oxlint.configWarning !== null) {
+    diagnostics.push(
+      makeDiagnostic({
+        id: "check-config-unparseable",
+        severity: "warning",
+        message: oxlint.configWarning
+      })
+    )
+  }
   const review = Review.review({
-    input: Review.makeReviewInput({ diagnostics: oxlint.diagnostics })
+    input: Review.makeReviewInput({ diagnostics: oxlint.diagnostics }),
+    mode
   })
   const allDiagnostics = [...review.diagnostics, ...diagnostics]
   const machineOutput = makeMachineOutput({
@@ -57,9 +74,15 @@ export const check = (args: {
     json: {
       machineOutput: encode(MachineOutput, machineOutput),
       review: encode(Review.ReviewResult, review),
-      oxlint: { files: oxlint.files, error: oxlint.error }
+      oxlint: {
+        files: oxlint.files,
+        error: oxlint.error,
+        mode,
+        config: oxlint.configSource,
+        configWarning: oxlint.configWarning
+      }
     },
-    human: buildHuman({ review, oxlint, diagnostics })
+    human: buildHuman({ review, oxlint, diagnostics: allDiagnostics, mode })
   }
 }
 
@@ -70,15 +93,16 @@ export const check = (args: {
  */
 const buildHuman = (args: {
   review: Review.ReviewResult
-  oxlint: { files: number; error: string | null }
+  oxlint: { files: number; error: string | null; configSource: string }
   diagnostics: Array<Diagnostic>
+  mode: CheckMode
 }): Array<string> => {
-  const { review, oxlint, diagnostics } = args
-  const lines: Array<string> = ["effect-lens check"]
+  const { review, oxlint, diagnostics, mode } = args
+  const lines: Array<string> = [`effect-lens check (${mode})`]
   if (oxlint.error !== null) {
     lines.push(`oxlint: ${oxlint.error}`)
   } else {
-    lines.push(`linted ${oxlint.files} file(s)`)
+    lines.push(`linted ${oxlint.files} file(s) (config: ${oxlint.configSource})`)
   }
   lines.push(
     `findings: ${review.summary.total} (${review.summary.errors} error(s), ` +
@@ -89,9 +113,10 @@ const buildHuman = (args: {
       `  - [${finding.severity}] ${finding.rule} ${finding.location.file}:${finding.location.line}`
     )
   }
-  if (diagnostics.length > 0) {
+  const visible = diagnostics.filter((d) => d.severity !== "off")
+  if (visible.length > 0) {
     lines.push("diagnostics:")
-    for (const d of diagnostics) {
+    for (const d of visible) {
       lines.push(`  - [${d.severity}] ${d.message}`)
     }
   }

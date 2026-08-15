@@ -19,6 +19,7 @@ import { homedir } from "node:os"
 import { resolve } from "node:path"
 import { parseArgs } from "node:util"
 import { Exit } from "../ExitStatus.ts"
+import { type CheckMode, DEFAULT_CHECK_MODE } from "../provider/Provider.ts"
 import { check } from "./commands/check.ts"
 import { doctor } from "./commands/doctor.ts"
 import { drift } from "./commands/drift.ts"
@@ -54,6 +55,7 @@ Options:
       --exclude <ver>   Exclude a version from recommendation (freshness only; repeatable)
   -j, --json            Emit machine-readable JSON output
       --path <path>     File or directory to lint (check only; relative to --project)
+      --mode <mode>     Check gate mode: lens-only (default) or unified (check only)
       --dry-run         Build a read-only setup plan (setup only)
       --apply           Apply the actionable setup plan (setup only; mutates)
   -h, --help            Show this help
@@ -82,6 +84,7 @@ const main = (): void => {
     workspace?: string
     json?: boolean
     path?: string
+    mode?: string
     "dry-run"?: boolean
     apply?: boolean
     catalog?: string
@@ -107,6 +110,7 @@ const main = (): void => {
         workspace: { type: "string" },
         json: { type: "boolean", short: "j" },
         path: { type: "string" },
+        mode: { type: "string" },
         "dry-run": { type: "boolean" },
         apply: { type: "boolean" },
         catalog: { type: "string" },
@@ -163,9 +167,17 @@ const main = (): void => {
       result = drift(context)
       break
     case "check":
+      if (values.mode !== undefined && values.mode !== "lens-only" && values.mode !== "unified") {
+        process.stderr.write(
+          `error: invalid --mode: ${values.mode} (expected lens-only or unified)\n\n${USAGE}`
+        )
+        process.exitCode = Exit.Error
+        return
+      }
+      const mode: CheckMode = values.mode === "unified" ? "unified" : DEFAULT_CHECK_MODE
       result = values.path === undefined
-        ? check({ projectDir, cacheDir })
-        : check({ projectDir, cacheDir, path: values.path })
+        ? check({ projectDir, cacheDir, mode })
+        : check({ projectDir, cacheDir, path: values.path, mode })
       break
     case "setup":
       if (values["dry-run"] === true && values.apply === true) {
