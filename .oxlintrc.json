@@ -17,6 +17,7 @@
     "coverage/**",
     "test/fixtures/rules/**",
     "test/fixtures/projects/check-unified/**",
+    "test/fixtures/projects/check-foldstryx/**",
     "**/*.tsbuildinfo"
   ],
   "overrides": [

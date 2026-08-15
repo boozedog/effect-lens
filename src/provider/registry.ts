@@ -3,12 +3,13 @@
  *
  * Holds the registered {@link RuleProvider} values and resolves a raw
  * diagnostic to the first provider that recognizes it. The Lens provider is
- * registered by default; first-party project providers (Foldkit, StyleX) are
- * a later slice and register through the same seam.
+ * registered by default, followed by the Foldstryx first-party provider.
+ * StyleX is a later slice and registers through the same seam.
  *
  * @since 0.0.0
  */
 import * as Option from "effect/Option"
+import { foldstryxProvider } from "./foldstryx.ts"
 import { lensProvider } from "./lens.ts"
 import { ProviderDiagnostic, type RawDiagnostic, type RuleProvider } from "./Provider.ts"
 
@@ -20,7 +21,7 @@ import { ProviderDiagnostic, type RawDiagnostic, type RuleProvider } from "./Pro
 export class ProviderRegistry {
   readonly #providers: ReadonlyArray<RuleProvider>
 
-  constructor(providers: ReadonlyArray<RuleProvider> = [lensProvider]) {
+  constructor(providers: ReadonlyArray<RuleProvider> = [lensProvider, foldstryxProvider]) {
     this.#providers = providers
   }
 
@@ -56,11 +57,12 @@ export class ProviderRegistry {
 }
 
 /**
- * The default registry with the Lens provider registered.
+ * The default registry with the Lens and Foldstryx providers registered.
  *
  * @since 0.0.0
  */
 export const defaultRegistry = new ProviderRegistry()
 
 export { lensProvider }
+export { foldstryxProvider }
 export type { RuleProvider } from "./Provider.ts"

@@ -2,7 +2,8 @@
  * A single evidence-backed finding produced by a rule against a location.
  *
  * Every finding MUST identify its rule, severity, source kind, version
- * applicability, location, and evidence. This is the shared result model that
+ * applicability, location, evidence, and the provider that produced it. This
+ * is the shared result model that
  * CLI, pi, and future MCP adapters all consume — they MUST NOT define their own
  * finding shapes.
  *
@@ -33,6 +34,7 @@ export class FindingLocation extends Schema.Class<FindingLocation>("FindingLocat
 export class Finding extends Schema.Class<Finding>("Finding")({
   id: Schema.NonEmptyString,
   rule: Schema.NonEmptyString,
+  provider: Schema.OptionFromNullOr(Schema.NonEmptyString),
   severity: Severity,
   source: SourceKind,
   message: Schema.NonEmptyString,
@@ -62,6 +64,7 @@ export class Diagnostic extends Schema.Class<Diagnostic>("Diagnostic")({
 export const makeFinding = (args: {
   id: string
   rule: string
+  provider?: string
   severity: Schema.Schema.Type<typeof Severity>
   source: Schema.Schema.Type<typeof SourceKind>
   message: string
@@ -73,6 +76,7 @@ export const makeFinding = (args: {
   new Finding({
     id: args.id,
     rule: args.rule,
+    provider: Option.fromNullishOr(args.provider ?? "lens"),
     severity: args.severity,
     source: args.source,
     message: args.message,

@@ -133,8 +133,9 @@ compatibility.
 Runs the available local read-only review path and aggregates findings and
 diagnostics into a `MachineOutput`. `check` is a configurable unified gate
 foundation: it normalizes toolchain diagnostics through registered rule
-providers (the Lens strict rules are the first provider) and surfaces the
-result as stable findings and diagnostics.
+providers (the Lens strict rules are the first provider, followed by the
+Foldstryx first-party provider) and surfaces the result as stable findings and
+diagnostics.
 
 ```sh
 effect-lens check --project . --cache ~/.cache/effect-lens --path src
@@ -193,6 +194,33 @@ removed in a `finally` block — it is never left behind and the project's own
 config is never modified. If the transient file cannot be written (for example
 a read-only project directory), a warning diagnostic is emitted instead of
 crashing.
+
+#### Foldstryx provider and migration
+
+`check` recognizes supported Foldstryx diagnostics (`foldstryx(no-async-function)`,
+`foldstryx(no-await-expression)`, `foldstryx(no-new-promise)`) through the
+registered Foldstryx provider. It never requires Foldstryx to be installed: it
+only recognizes diagnostic codes, so single-project Lens use is unaffected.
+Each supported Foldstryx rule maps explicitly to the canonical Lens rule that
+enforces the same Effect-first policy (see `docs/contracts.md`).
+
+During migration a project may run both Foldstryx and the Lens strict rules.
+`check` avoids duplicate gate findings for equivalent diagnostics that refer to
+the same canonical rule and location:
+
+- The canonical Lens finding is kept; a redundant Foldstryx diagnostic at the
+  same rule/location becomes a `warning` migration diagnostic (id
+  `review-migration-*`) that names the redundant rule, the Lens equivalent, and
+  the location.
+- The `review` payload's `migration` field is a read-only migration report
+  listing each redundant Foldstryx rule, its canonical Lens equivalent, and how
+  many overlapping locations were observed. The human output prints a
+  `migration:` section with the same recommendation.
+- A Foldstryx diagnostic at a location with no equivalent Lens finding is kept
+  as a finding with `provider: "foldstryx"` provenance so it is never silently
+  dropped.
+
+The migration report and diagnostics are advisory and never mutate config.
 
 ### `effect-lens setup --dry-run`
 
@@ -404,9 +432,9 @@ check passes; it never touches project configuration.
   explicitly.
 - `check` runs the Lens strict rules and the standard correctness/suspicious
   categories. It does not yet run the full `lookup`/`design`/state-pressure
-  analysis surfaces. First-party project providers (Foldkit, StyleX) are not
-  yet registered; the provider seam is in place and the Lens rules are the
-  first provider.
+  analysis surfaces. The Lens and Foldstryx providers are registered; the
+  StyleX first-party provider is a later slice and registers through the same
+  seam.
 - `setup --apply` and `hooks install|uninstall` mutate only the `hk` hook
   manager (`hk.pkl`); creating a `hk.pkl` from scratch (run `hk init` first)
   and mutating the other hook managers are out of scope for this slice.

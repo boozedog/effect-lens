@@ -14,6 +14,7 @@
  *
  * @since 0.0.0
  */
+import * as Option from "effect/Option"
 import { resolve } from "node:path"
 import { aggregateStatus, MachineOutput, makeMachineOutput } from "../../ExitStatus.ts"
 import type { Diagnostic } from "../../Finding.ts"
@@ -110,8 +111,20 @@ const buildHuman = (args: {
   )
   for (const finding of review.findings) {
     lines.push(
-      `  - [${finding.severity}] ${finding.rule} ${finding.location.file}:${finding.location.line}`
+      `  - [${finding.severity}] ${finding.rule} (${
+        Option.getOrNull(finding.provider) ?? "lens"
+      }) ` +
+        `${finding.location.file}:${finding.location.line}`
     )
+  }
+  if (review.migration.entries.length > 0) {
+    lines.push("migration:")
+    for (const entry of review.migration.entries) {
+      lines.push(
+        `  - ${entry.providerRule} → ${entry.canonicalRule} (${entry.count} location(s)): ` +
+          entry.recommendation
+      )
+    }
   }
   const visible = diagnostics.filter((d) => d.severity !== "off")
   if (visible.length > 0) {

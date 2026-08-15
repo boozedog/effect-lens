@@ -3,7 +3,11 @@ import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import { spawnSync } from "node:child_process"
 import * as path from "node:path"
+import { makeLocation } from "../../src/Finding.ts"
 import * as Review from "../../src/operations/review.ts"
+import { foldstryxProvider } from "../../src/provider/foldstryx.ts"
+import { lensProvider } from "../../src/provider/lens.ts"
+import { ProviderDiagnostic, type RuleProvider } from "../../src/provider/Provider.ts"
 
 const diag = (args: {
   code: string
@@ -170,5 +174,206 @@ describe("review", () => {
     expect(reviewed.findings.length).toBeGreaterThan(0)
     expect(reviewed.findings.every((f) => f.rule.startsWith("lens/"))).toBe(true)
     expect(reviewed.summary.errors).toBeGreaterThan(0)
+  })
+})
+
+describe("review with Foldstryx provider and migration dedup", () => {
+  it("Foldstryx-only: a Foldstryx diagnostic becomes a finding with foldstryx provenance", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [diag({ code: "foldstryx(no-async-function)", line: 3 })]
+      }),
+      providers: [foldstryxProvider]
+    })
+    expect(result.findings).toHaveLength(1)
+    expect(result.findings[0].rule).toBe("lens/no-async-function")
+    expect(Option.getOrNull(result.findings[0].provider)).toBe("foldstryx")
+    expect(result.findings[0].source).toBe("lens-strict")
+    expect(result.findings[0].location.line).toBe(3)
+    expect(result.migration.entries).toEqual([])
+  })
+
+  it("Lens-only: a Foldstryx diagnostic is unrecognized and becomes an off note", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [diag({ code: "foldstryx(no-async-function)", severity: "error", line: 3 })]
+      }),
+      providers: [lensProvider]
+    })
+    expect(result.findings).toEqual([])
+    expect(result.diagnostics).toHaveLength(1)
+    expect(result.diagnostics[0].severity).toBe("off")
+    expect(result.diagnostics[0].message).toContain("foldstryx(no-async-function)")
+    expect(result.migration.entries).toEqual([])
+  })
+
+  it("both-enabled same location: one Lens finding plus a migration diagnostic and report entry", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [
+          diag({ code: "lens(no-async-function)", line: 3 }),
+          diag({ code: "foldstryx(no-async-function)", line: 3 })
+        ]
+      }),
+      providers: [lensProvider, foldstryxProvider]
+    })
+    // One finding, not two: the Foldstryx diagnostic is redundant.
+    expect(result.findings).toHaveLength(1)
+    expect(result.findings[0].rule).toBe("lens/no-async-function")
+    expect(Option.getOrNull(result.findings[0].provider)).toBe("lens")
+    // A migration diagnostic explains the overlap.
+    const migrationDiag = result.diagnostics.find((d) => d.id.startsWith("review-migration-"))
+    expect(migrationDiag).toBeDefined()
+    expect(migrationDiag?.severity).toBe("warning")
+    expect(migrationDiag?.message).toContain("foldstryx/no-async-function")
+    expect(migrationDiag?.message).toContain("lens/no-async-function")
+    // The migration report lists the redundant rule once.
+    expect(result.migration.entries).toHaveLength(1)
+    expect(result.migration.entries[0].providerRule).toBe("foldstryx/no-async-function")
+    expect(result.migration.entries[0].canonicalRule).toBe("lens/no-async-function")
+    expect(result.migration.entries[0].count).toBe(1)
+  })
+
+  it("both-enabled different location: both findings are kept, no migration", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [
+          diag({ code: "lens(no-async-function)", line: 3 }),
+          diag({ code: "foldstryx(no-async-function)", line: 9 })
+        ]
+      }),
+      providers: [lensProvider, foldstryxProvider]
+    })
+    expect(result.findings).toHaveLength(2)
+    expect(result.findings[0].provider).toEqual(Option.some("lens"))
+    expect(result.findings[1].provider).toEqual(Option.some("foldstryx"))
+    expect(result.migration.entries).toEqual([])
+  })
+
+  it("two overlapping locations increment the migration entry count", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [
+          diag({ code: "lens(no-async-function)", line: 3 }),
+          diag({ code: "foldstryx(no-async-function)", line: 3 }),
+          diag({ code: "lens(no-async-function)", line: 9 }),
+          diag({ code: "foldstryx(no-async-function)", line: 9 })
+        ]
+      }),
+      providers: [lensProvider, foldstryxProvider]
+    })
+    // Two distinct locations, each collapsing to one Lens finding.
+    expect(result.findings).toHaveLength(2)
+    // The migration report lists the redundant rule once with count 2.
+    expect(result.migration.entries).toHaveLength(1)
+    expect(result.migration.entries[0].providerRule).toBe("foldstryx/no-async-function")
+    expect(result.migration.entries[0].count).toBe(2)
+  })
+
+  it("both-enabled unknown Foldstryx rule: surfaced as an unrecognized diagnostic", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [diag({ code: "foldstryx(no-console)", severity: "error", line: 3 })]
+      }),
+      mode: "unified",
+      providers: [lensProvider, foldstryxProvider]
+    })
+    expect(result.findings).toEqual([])
+    expect(result.diagnostics).toHaveLength(1)
+    expect(result.diagnostics[0].severity).toBe("error")
+    expect(result.diagnostics[0].message).toContain("foldstryx(no-console)")
+    expect(result.migration.entries).toEqual([])
+  })
+
+  it("both-enabled location difference: equivalent rules at different lines are not deduped", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [
+          diag({ code: "lens(no-async-function)", line: 1 }),
+          diag({ code: "foldstryx(no-async-function)", line: 2 })
+        ]
+      }),
+      providers: [lensProvider, foldstryxProvider]
+    })
+    expect(result.findings).toHaveLength(2)
+    expect(result.migration.entries).toEqual([])
+  })
+
+  it("both-enabled severity difference: the Lens finding is kept with its severity", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [
+          diag({ code: "lens(no-async-function)", severity: "error", line: 3 }),
+          diag({ code: "foldstryx(no-async-function)", severity: "warning", line: 3 })
+        ]
+      }),
+      providers: [lensProvider, foldstryxProvider]
+    })
+    expect(result.findings).toHaveLength(1)
+    expect(result.findings[0].severity).toBe("error")
+    expect(result.migration.entries).toHaveLength(1)
+  })
+
+  it("both-enabled reverse severity: the collapsed finding takes the strictest severity", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [
+          diag({ code: "lens(no-async-function)", severity: "warning", line: 3 }),
+          diag({ code: "foldstryx(no-async-function)", severity: "error", line: 3 })
+        ]
+      }),
+      providers: [lensProvider, foldstryxProvider]
+    })
+    // A blocking Foldstryx error is never downgraded to advisory by the
+    // collapsed Lens finding.
+    expect(result.findings).toHaveLength(1)
+    expect(result.findings[0].severity).toBe("error")
+    expect(result.status).toBe(2)
+    expect(result.migration.entries).toHaveLength(1)
+  })
+
+  it("a future non-Lens provider in a group does not crash the gate", () => {
+    const futureProvider: RuleProvider = {
+      id: "future",
+      title: "Future provider",
+      ruleIds: ["future/no-async-function"],
+      recognizes: (code) => code === "future(no-async-function)",
+      normalize: (d, _index) =>
+        new ProviderDiagnostic({
+          provider: "future",
+          rule: Option.some("lens/no-async-function"),
+          severity: d.severity,
+          message: d.message,
+          location: makeLocation({ file: d.filename, line: 1 }),
+          code: d.code,
+          source: "lens-strict",
+          evidence: []
+        })
+    }
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [diag({ code: "future(no-async-function)", line: 3 })]
+      }),
+      providers: [futureProvider]
+    })
+    expect(result.findings).toHaveLength(1)
+    expect(result.findings[0].rule).toBe("lens/no-async-function")
+    expect(Option.getOrNull(result.findings[0].provider)).toBe("future")
+  })
+
+  it("round-trips a ReviewResult with migration through JSON", () => {
+    const result = Review.review({
+      input: Review.makeReviewInput({
+        diagnostics: [
+          diag({ code: "lens(no-async-function)", line: 3 }),
+          diag({ code: "foldstryx(no-async-function)", line: 3 })
+        ]
+      }),
+      providers: [lensProvider, foldstryxProvider]
+    })
+    const json = Schema.encodeSync(Review.ReviewResult)(result)
+    const decoded = Schema.decodeUnknownSync(Review.ReviewResult)(json)
+    expect(Schema.encodeSync(Review.ReviewResult)(decoded)).toEqual(json)
+    expect(decoded.migration.entries).toHaveLength(1)
   })
 })

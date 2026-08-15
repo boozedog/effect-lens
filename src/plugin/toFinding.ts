@@ -68,6 +68,7 @@ export const toFinding = (
   const finding = makeFinding({
     id: `f-${index}`,
     rule: rule.value.id,
+    provider: "lens",
     severity: severityOf(diagnostic.severity),
     source: rule.value.kind === "lens-strict" ? "lens-strict" : "upstream",
     message: diagnostic.message,

@@ -4,7 +4,7 @@
  * A provider owns a set of rule ids and normalizes raw toolchain diagnostics
  * (e.g. oxlint JSON diagnostics) into {@link ProviderDiagnostic} values that
  * carry provider identity and provenance. The Lens strict rules are the first
- * provider; future first-party project providers (Foldkit, StyleX) register
+ * provider, followed by the Foldstryx first-party provider; StyleX registers
  * through the same seam without changing the review operation.
  *
  * @since 0.0.0

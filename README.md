@@ -94,12 +94,16 @@ the operation contracts.
 
 `check` is a configurable unified gate foundation. It normalizes toolchain
 diagnostics through registered rule providers (`src/provider/`); the Lens
-strict rules are the first provider. `check` runs in two modes: `lens-only`
+strict rules are the first provider, followed by the Foldstryx first-party
+provider. `check` runs in two modes: `lens-only`
 (default, preserving the existing single-package behavior) and `unified` (a
 config-preserving gate that loads the target repository's oxlint config —
 ignores, overrides, and rule settings — while loading the Lens rules, and
-surfaces unknown project diagnostics as visible warnings). See `docs/cli.md`
-for the modes and configuration precedence.
+surfaces unknown project diagnostics with their raw oxlint severity). During migration,
+equivalent Lens and Foldstryx diagnostics at the same rule/location collapse
+to a single finding, and a read-only migration report recommends the Lens
+equivalent for each redundant Foldstryx rule. See `docs/cli.md` for the modes,
+configuration precedence, and migration behavior.
 
 ## Reference-pack acquisition planning
 

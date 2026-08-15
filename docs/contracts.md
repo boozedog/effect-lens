@@ -10,6 +10,99 @@ Serialization is JSON. Each `Schema.Class` encodes to a plain JSON object with
 Optional fields are modelled with `Schema.OptionFromNullOr` and serialize to
 `null` when absent and to their value when present.
 
+## Rule provider seam — src/provider/
+
+The unified `check` gate normalizes toolchain diagnostics through registered
+rule providers. A provider owns a set of rule ids and normalizes a raw
+diagnostic into a `ProviderDiagnostic` that carries provider identity and
+provenance. The Lens strict rules are the first provider, followed by the
+Foldstryx first-party provider. StyleX is a later slice and registers through
+the same seam without changing the `review` operation.
+
+### `ProviderDiagnostic`
+
+A normalized diagnostic with provider provenance.
+
+```json
+{
+  "provider": "lens",
+  "rule": "lens/no-async-function | null",
+  "severity": "error | warning | off",
+  "message": "Avoid async functions",
+  "location": { "file": "src/service.ts", "line": 14, "column": 3, "snippet": null },
+  "code": "lens(no-async-function)",
+  "source": "lens-strict",
+  "evidence": []
+}
+```
+
+`provider` is the stable provider identity that produced the diagnostic;
+`rule` is the provider's rule id when the diagnostic maps to a rule, or `null`
+for a non-rule diagnostic. `source` and `evidence` are supplied by the provider
+so a non-Lens provider can carry its own provenance and evidence without the
+`review` operation re-deriving them from the Lens catalog.
+
+### `RuleProvider`
+
+```ts
+interface RuleProvider {
+  readonly id: string
+  readonly title: string
+  readonly ruleIds: ReadonlyArray<string>
+  readonly recognizes: (code: string) => boolean
+  readonly normalize: (diagnostic: RawDiagnostic, index: number) => ProviderDiagnostic | null
+}
+```
+
+`recognizes` decides whether the provider owns a raw diagnostic `code`;
+`normalize` converts a recognized raw diagnostic into a `ProviderDiagnostic`
+(or `null` when it does not recognize it). `src/provider/lens.ts` exports the
+`lensProvider`; `src/provider/foldstryx.ts` exports the `foldstryxProvider`;
+`src/provider/registry.ts` exports `ProviderRegistry` (which resolves a raw
+diagnostic to the first provider that recognizes it) and `defaultRegistry`
+(the Lens and Foldstryx providers registered).
+
+### `CheckMode`
+
+```json
+"lens-only" | "unified"
+```
+
+- `lens-only` (default) — preserves the existing single-package Lens behavior:
+  a fresh scratch config loads the Lens rules, and unrecognized diagnostics are
+  advisory `off` notes.
+- `unified` — a config-preserving gate: the target repository's oxlint config
+  (ignores, overrides, rule settings) is preserved while the Lens rules are
+  loaded, and unrecognized project diagnostics are surfaced as visible
+  diagnostics with their raw oxlint severity.
+
+### Foldstryx provider and rule equivalence
+
+The Foldstryx provider (`src/provider/foldstryx.ts`) recognizes the supported
+`foldstryx(...)` diagnostic codes and normalizes them with
+`provider: "foldstryx"` provenance. It never requires Foldstryx to be
+installed: it only recognizes diagnostic codes, so single-project Lens use is
+unaffected.
+
+The explicit Foldstryx → Lens rule-equivalence mapping lives in
+`src/provider/equivalence.ts` (`foldstryxEquivalences`). Each supported
+Foldstryx rule maps to the canonical Lens rule that enforces the same
+Effect-first policy:
+
+| Foldstryx rule                  | Canonical Lens rule        |
+| ------------------------------- | -------------------------- |
+| `foldstryx/no-async-function`   | `lens/no-async-function`   |
+| `foldstryx/no-await-expression` | `lens/no-await-expression` |
+| `foldstryx/no-new-promise`      | `lens/no-new-promise`      |
+
+A supported Foldstryx diagnostic is normalized toward its canonical Lens rule:
+the normalized `ProviderDiagnostic` carries the canonical Lens rule id, source
+kind, and catalog evidence, so the `review` operation can compare it directly
+with a Lens diagnostic. The `provider: "foldstryx"` field preserves the
+Foldstryx provenance. A Foldstryx rule with no Lens equivalent is not
+recognized by the provider and is surfaced as an unrecognized diagnostic rather
+than being coerced into a Lens rule.
+
 ## Rule catalog and oxlint plugin
 
 The strict rule layer lives in two places that MUST stay in sync:
@@ -272,6 +365,7 @@ Narrow scope is preferred. There is no blanket disable mechanism.
 {
   "id": "f-1",
   "rule": "lens/no-async-function",
+  "provider": "lens | null",
   "severity": "error",
   "source": "lens-strict",
   "message": "Prefer Effect composition.",
@@ -282,10 +376,15 @@ Narrow scope is preferred. There is no blanket disable mechanism.
 }
 ```
 
+`provider` is the stable provider identity that produced the finding (`"lens"`
+for the Lens provider, `"foldstryx"` for the Foldstryx provider). The key is
+always present in encoded output (`makeFinding` defaults it to `"lens"`); it
+decodes as `null` for legacy values that predate the field.
+
 ### `Diagnostic`
 
 A non-rule diagnostic (toolchain or resolution problem). Same shape as a finding
-minus evidence/waivers/rule.
+minus evidence/waivers/rule/provider.
 
 ## `ExitStatus` — src/ExitStatus.ts
 
@@ -1177,9 +1276,13 @@ silently used. A query with no matches emits a `lookup-no-matches` diagnostic.
 
 Maps oxlint diagnostics to stable Lens `Finding` values and summarises them. It
 normalizes each raw diagnostic through the registered rule providers (the Lens
-strict rules are the first provider) and maps the normalized diagnostics to
-stable `Finding` values. Diagnostics that no provider recognizes are never
-coerced into Lens findings; they are surfaced as non-rule `Diagnostic` values.
+strict rules are the first provider, followed by the Foldstryx first-party
+provider) and maps the normalized diagnostics to stable `Finding` values.
+Equivalent Lens and Foldstryx diagnostics that refer to the same canonical rule
+and location collapse to a single finding; the redundant Foldstryx diagnostic
+becomes a migration diagnostic plus a `MigrationReport` entry. Diagnostics that
+no provider recognizes are never coerced into Lens findings; they are surfaced
+as non-rule `Diagnostic` values.
 
 `review` accepts an optional `mode` (`lens-only` default | `unified`) and an
 optional `providers` list. In `lens-only` mode unrecognized diagnostics are
@@ -1222,6 +1325,7 @@ The Schema-backed counterpart of the `OxlintDiagnostic` interface in
   "findings": [],
   "diagnostics": [],
   "summary": { "total": 0, "errors": 0, "warnings": 0 },
+  "migration": { "entries": [] },
   "status": 0
 }
 ```
@@ -1232,70 +1336,28 @@ notes in `lens-only` mode and do not change the status; in `unified` mode they
 are surfaced with their raw severity and the caller's `aggregateStatus` (see
 `ExitStatus`) reflects them in the exit code.
 
-## Rule provider seam — src/provider/
+#### `MigrationEntry` and `MigrationReport`
 
-The unified `check` gate normalizes toolchain diagnostics through registered
-rule providers. A provider owns a set of rule ids and normalizes a raw
-diagnostic into a `ProviderDiagnostic` that carries provider identity and
-provenance. The Lens strict rules are the first provider; first-party project
-providers (Foldkit, StyleX) are a later slice and register through the same
-seam without changing the `review` operation.
-
-### `ProviderDiagnostic`
-
-A normalized diagnostic with provider provenance.
+The `migration` field of `ReviewResult` is the migration report: the redundant
+first-party provider rules observed in a review and the canonical Lens rule each
+should be replaced with. It is read-only and advisory — it never mutates config.
 
 ```json
 {
-  "provider": "lens",
-  "rule": "lens/no-async-function | null",
-  "severity": "error | warning | off",
-  "message": "Avoid async functions",
-  "location": { "file": "src/service.ts", "line": 14, "column": 3, "snippet": null },
-  "code": "lens(no-async-function)",
-  "source": "lens-strict",
-  "evidence": []
+  "providerRule": "foldstryx/no-async-function",
+  "canonicalRule": "lens/no-async-function",
+  "count": 2,
+  "recommendation": "Replace foldstryx/no-async-function with lens/no-async-function; Lens enforces the same rule with catalog evidence."
 }
 ```
 
-`provider` is the stable provider identity that produced the diagnostic;
-`rule` is the provider's rule id when the diagnostic maps to a rule, or `null`
-for a non-rule diagnostic. `source` and `evidence` are supplied by the provider
-so a non-Lens provider can carry its own provenance and evidence without the
-`review` operation re-deriving them from the Lens catalog.
-
-### `RuleProvider`
-
-```ts
-interface RuleProvider {
-  readonly id: string
-  readonly title: string
-  readonly ruleIds: ReadonlyArray<string>
-  readonly recognizes: (code: string) => boolean
-  readonly normalize: (diagnostic: RawDiagnostic, index: number) => ProviderDiagnostic | null
-}
-```
-
-`recognizes` decides whether the provider owns a raw diagnostic `code`;
-`normalize` converts a recognized raw diagnostic into a `ProviderDiagnostic`
-(or `null` when it does not recognize it). `src/provider/lens.ts` exports the
-`lensProvider`; `src/provider/registry.ts` exports `ProviderRegistry` (which
-resolves a raw diagnostic to the first provider that recognizes it) and
-`defaultRegistry` (the Lens provider registered).
-
-### `CheckMode`
-
-```json
-"lens-only" | "unified"
-```
-
-- `lens-only` (default) — preserves the existing single-package Lens behavior:
-  a fresh scratch config loads the Lens rules, and unrecognized diagnostics are
-  advisory `off` notes.
-- `unified` — a config-preserving gate: the target repository's oxlint config
-  (ignores, overrides, rule settings) is preserved while the Lens rules are
-  loaded, and unrecognized project diagnostics are surfaced as visible
-  `warning` diagnostics.
+`count` is the number of overlapping locations observed for that rule pair.
+Each redundant Foldstryx diagnostic is also surfaced as a `warning` migration
+`Diagnostic` (id `review-migration-*`) that names the redundant rule, the
+canonical Lens rule, and the location, so the overlap and migration path stay
+explainable. A Foldstryx diagnostic at a location with no equivalent Lens
+finding is kept as a finding with `provider: "foldstryx"` provenance so it is
+never silently dropped.
 
 ### `design` — src/operations/design.ts
 

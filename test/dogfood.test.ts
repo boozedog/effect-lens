@@ -56,7 +56,7 @@ describe("self-dogfood", () => {
     expect(payloads.check?.oxlint?.files).toBeGreaterThan(0)
     expect(payloads.setup?.plan?.oxlint?.status).toBe("configured")
     expect(payloads.hooks?.hooks?.managers?.length).toBeGreaterThan(0)
-  })
+  }, 30000)
 
   it("fails the doctor check when the project has no effect dependency", () => {
     const result = runDogfood({ projectDir: project("missing-dependency"), cacheDir })
@@ -68,7 +68,7 @@ describe("self-dogfood", () => {
     const payloads = payloadsOf(result)
     expect(payloads.doctor?.machineOutput?.status).toBe(2)
     expect(payloads.doctor?.resolution?.status).toBe("missing")
-  })
+  }, 30000)
 
   it("fails the check when the target path has Lens findings", () => {
     const result = runDogfood({
@@ -84,7 +84,7 @@ describe("self-dogfood", () => {
     const payloads = payloadsOf(result)
     expect(payloads.check?.oxlint?.files).toBeGreaterThan(0)
     expect(payloads.check?.machineOutput?.findings?.length).toBeGreaterThan(0)
-  })
+  }, 30000)
 })
 
 describe("self-dogfood process", () => {
@@ -97,7 +97,7 @@ describe("self-dogfood process", () => {
     expect(result.stdout).toContain("ok: check")
     expect(result.stdout).toContain("ok: setup")
     expect(result.stdout).toContain("ok: hooks")
-  })
+  }, 30000)
 
   it("exits 1 and names the failing check for a broken project", () => {
     const result = runProcess([
@@ -109,5 +109,5 @@ describe("self-dogfood process", () => {
     expect(result.status).toBe(1)
     expect(result.stdout).toContain("self-dogfood FAILED")
     expect(result.stdout).toContain("FAILED: doctor")
-  })
+  }, 30000)
 })

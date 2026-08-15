@@ -26,6 +26,38 @@ const cachePartialDir = fileURLToPath(new URL("./fixtures/cache-partial", import
 const cacheMonoDir = fileURLToPath(new URL("./fixtures/cache-mono", import.meta.url))
 const monorepo = fileURLToPath(new URL("./fixtures/projects/monorepo", import.meta.url))
 const unifiedProject = fileURLToPath(new URL("./fixtures/projects/check-unified", import.meta.url))
+const foldstryxPlugin = fileURLToPath(
+  new URL("./fixtures/projects/check-foldstryx/foldstryx-plugin.ts", import.meta.url)
+)
+
+/**
+ * A synchronous sleep used to poll for transient-config cleanup. `Atomics.wait`
+ * blocks the current thread without busy-spinning the CPU.
+ *
+ * @since 0.0.0
+ */
+const sleepSync = (ms: number): void => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * Polls until no `.effect-lens-check-oxlintrc-*` transient config remains in
+ * `dir`, or `timeoutMs` elapses. The `check` command writes a transient config
+ * into the project dir and removes it in a `finally` block; a concurrent CLI
+ * subprocess (e.g. `test/cli.test.ts`) may still be mid-run, so the read-only
+ * guarantee is asserted by polling rather than a single racy snapshot.
+ *
+ * @since 0.0.0
+ */
+const waitForNoTransient = (dir: string, timeoutMs = 5000): boolean => {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const leftovers = readdirSync(dir).filter((f) => f.startsWith(".effect-lens-check-oxlintrc-"))
+    if (leftovers.length === 0) return true
+    sleepSync(50)
+  }
+  return readdirSync(dir).filter((f) => f.startsWith(".effect-lens-check-oxlintrc-")).length === 0
+}
 
 describe("doctor", () => {
   it("reports a resolved project with a complete pack as ok", () => {
@@ -338,10 +370,8 @@ describe("check", () => {
     const configPath = join(unifiedProject, ".oxlintrc.json")
     const before = readFileSync(configPath, "utf8")
     check({ projectDir: unifiedProject, cacheDir, mode: "unified" })
-    const leftovers = readdirSync(unifiedProject).filter((f) =>
-      f.startsWith(".effect-lens-check-oxlintrc-")
-    )
-    expect(leftovers).toEqual([])
+    // Poll for cleanup: a concurrent CLI subprocess may still be mid-run.
+    expect(waitForNoTransient(unifiedProject)).toBe(true)
     expect(readFileSync(configPath, "utf8")).toBe(before)
   })
 
@@ -353,5 +383,48 @@ describe("check", () => {
     ).toBe(true)
     const json = result.json as { oxlint: { config: string } }
     expect(json.oxlint.config).toBe("builtin")
+  })
+
+  it("unified mode dedups equivalent Foldstryx diagnostics and reports migration", () => {
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-foldstryx-"))
+    try {
+      writeFileSync(
+        join(dir, ".oxlintrc.json"),
+        JSON.stringify({
+          jsPlugins: [foldstryxPlugin],
+          rules: { "foldstryx/no-async-function": "error" }
+        })
+      )
+      mkdirSync(join(dir, "src"))
+      writeFileSync(join(dir, "src", "a.ts"), "async function foo() {\n  return 1\n}\nvoid foo\n")
+      const result = check({ projectDir: dir, cacheDir, mode: "unified" })
+      // The Lens rule fires on src/a.ts; the Foldstryx rule fires on the same
+      // location, so the two collapse to one Lens finding.
+      const asyncFindings = result.machineOutput.findings.filter(
+        (f) => f.rule === "lens/no-async-function"
+      )
+      // Exactly one async function in the fixture → exactly one Lens finding.
+      expect(asyncFindings.length).toBe(1)
+      // No duplicate Foldstryx finding: every Foldstryx diagnostic is redundant.
+      expect(
+        result.machineOutput.findings.some((f) => Option.getOrNull(f.provider) === "foldstryx")
+      ).toBe(false)
+      // A migration diagnostic explains the overlap.
+      expect(
+        result.machineOutput.diagnostics.some((d) => d.id.startsWith("review-migration-"))
+      ).toBe(true)
+      // The migration report lists the redundant Foldstryx rules.
+      const json = result.json as {
+        review: { migration: { entries: Array<{ providerRule: string; canonicalRule: string }> } }
+      }
+      const entries = json.review.migration.entries
+      expect(entries.some((e) => e.providerRule === "foldstryx/no-async-function")).toBe(true)
+      expect(entries.some((e) => e.canonicalRule === "lens/no-async-function")).toBe(true)
+      // The human output surfaces the migration section.
+      expect(result.human.join("\n")).toContain("migration:")
+      expect(result.human.join("\n")).toContain("foldstryx/no-async-function")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
