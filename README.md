@@ -70,9 +70,11 @@ catalog entry is selected only by exact name+version match, never by range or
 
 Planning is strictly read-only: it never fetches, writes, deletes, or updates
 cache files, and it never adds implicit network behavior to `doctor`, `drift`,
-`lookup`, or guidance ingestion. Network acquisition and atomic promotion of a
-chosen pack are intentionally deferred to a later slice; this slice only
-produces the plan.
+`lookup`, or guidance ingestion. The explicit acquisition executor
+`src/PackAcquire.ts` (`acquirePack`) verifies and atomically promotes a chosen
+pack through an injected, synchronous transport; it is never invoked implicitly
+and performs no network I/O itself. CLI wiring and a real network transport
+adapter are still to come.
 
 ## Strict rule layer
 

@@ -9,6 +9,7 @@ import * as Guidance from "../src/Guidance.ts"
 import * as GuidanceIngestor from "../src/GuidanceIngestor.ts"
 import * as HookMutation from "../src/HookMutation.ts"
 import * as Hooks from "../src/Hooks.ts"
+import * as PackAcquire from "../src/PackAcquire.ts"
 import * as PackageIdentity from "../src/PackageIdentity.ts"
 import * as PackPlan from "../src/PackPlan.ts"
 import * as PackVerifier from "../src/PackVerifier.ts"
@@ -164,6 +165,26 @@ describe("Serialization round-trips", () => {
       entries: [manifest]
     })
     roundTrip(PackPlan.PackCatalog, catalog)
+  })
+
+  it("AcquirePackResult (acquired)", () => {
+    const manifest = ReferencePack.makePackManifest({
+      id: "pack-effect-109",
+      effectVersion: "4.0.0-rc.109",
+      packageIdentity: effect109,
+      upstream,
+      includedPaths: ["LLMS.md"],
+      status: "complete",
+      sourceUrl: "https://github.com/effect-ts/effect"
+    })
+    const result = PackAcquire.makeAcquirePackResult({
+      cacheDir: "/abs/cache",
+      entry: manifest,
+      action: "acquired",
+      manifest,
+      message: "acquired reference pack pack-effect-109"
+    })
+    roundTrip(PackAcquire.AcquirePackResult, result)
   })
 
   it("PackAcquisitionPlan (already-complete)", () => {

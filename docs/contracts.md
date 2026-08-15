@@ -449,8 +449,8 @@ verifier contracts. The planner derives the project's exact Effect identity via
 the resolver, classifies the local pack state, and returns an ordered,
 JSON-serializable plan of read-only actions. It never fetches, writes, deletes,
 or updates cache files, and it never adds implicit network behavior to other
-commands. Network acquisition and atomic promotion are deferred to a later
-slice.
+commands. Network acquisition and atomic promotion are the explicit
+`PackAcquire` executor (below), never a side effect of planning.
 
 The catalog input is explicit: callers pass the entries directly or load them
 with `loadPackCatalog`. The catalog is the ONLY place the planner learns a
@@ -548,6 +548,109 @@ planning. Decision rules:
 `selectCatalogEntry` is the documented catalog rule: an exact `samePackage`
 (name and version) match only — never a range, compatible, or "any newer"
 selection.
+
+## `PackAcquire` — src/PackAcquire.ts
+
+Explicit reference-pack acquisition with verification and atomic cache
+promotion. This is the mutating counterpart to the read-only `PackPlan`
+planner: given an explicit, exact catalog entry and an injected transport, it
+verifies the fetched artifact and atomically promotes a complete pack into the
+cache. Acquisition is NEVER implicit — no CLI command, plan, doctor, drift,
+lookup, or guidance-ingestion path invokes it, and it performs no network I/O
+itself.
+
+### `AcquirePackAction`
+
+```json
+["acquired", "already-present", "refused", "failed"]
+```
+
+- `acquired` — the artifact was fetched, verified, and atomically promoted.
+- `already-present` — an exact, complete pack is already cached; nothing was
+  written and the transport was not invoked.
+- `refused` — a deterministic precondition/validation failure (missing source
+  URL, identity/version/integrity mismatch, missing file, traversal/symlink
+  escape, or a divergent existing pack without an explicit replace). Nothing
+  was written.
+- `failed` — an unexpected transport or filesystem error. Nothing was written
+  to the final pack directory.
+
+### `AcquirePackResult`
+
+```json
+{
+  "cacheDir": "/abs/cache",
+  "entry": { "id": "pack-effect-109", "…": "…" },
+  "action": "acquired",
+  "manifest": { "id": "pack-effect-109", "…": "…" } | null,
+  "verification": { "manifest": { "…": "…" }, "missingFiles": [], "metadataChanged": false, "stale": false, "message": null } | null,
+  "diagnostics": [],
+  "message": "acquired reference pack pack-effect-109 | null"
+}
+```
+
+Diagnostics NEVER contain credentials, remote response bodies, or arbitrary
+fetched content.
+
+### The transport boundary
+
+`acquirePack({ cacheDir, catalogEntry, transport, replace? })` takes a narrow,
+documented, synchronous transport:
+
+```ts
+type PackArtifactTransport = (
+  entry: PackManifest
+) => { ok: true; stagedDir: string } | { ok: false; reason: string }
+```
+
+The transport receives the catalog entry (the ONLY source of the artifact's
+URL) and returns either a local staging directory containing the fetched
+artifact (including a decodable `manifest.json`) or a refusal. The executor
+performs no network I/O and is fully testable offline. Real network adapters
+stage the artifact to a temp directory before invoking `acquirePack`. No other
+command or operation uses a transport.
+
+### Validation and promotion
+
+`acquirePack` rejects (returns `refused`, writing nothing) when:
+
+- the catalog entry has no explicit `sourceUrl`;
+- the staged `manifest.json` is missing/undecodable, its `id` differs, its
+  package identity is not the exact name+version match, or its included paths
+  differ from the catalog;
+- an included path escapes the staged root (`..`, absolute, or a symlink to an
+  outside directory) or is not a regular non-symlink file;
+- an included file is absent (content completeness);
+- the declared `integrity` (SRI `sha256`/`sha512` over framed per-file input —
+  `path \0 uint64le(len) \0 <bytes>` for each file in catalog order, so
+  re-slicing file boundaries cannot collide) does not match, or its algorithm
+  is not `sha256`/`sha512`;
+- the catalog entry `id` is not a single safe path segment (no separators,
+  no `..`, no absolute path), so `cacheDir/<id>` can never escape the cache.
+
+It preserves an existing complete pack (`already-present`, transport not
+invoked) and refuses a divergent existing pack unless `replace: true` is set.
+Replacement is safe: the divergent directory is moved aside before the atomic
+rename and restored on failure. A pack is only treated as complete when its
+stored `manifest.json` is decodable and matches the catalog, so a missing or
+corrupt manifest is never silently accepted.
+
+Promotion is atomic: the validated files plus a final manifest (preserving the
+catalog's upstream ref, source URL, integrity, included paths, and attribution)
+are copied into an executor-owned temp directory under `cacheDir`, and that
+complete directory is then renamed into `cacheDir/<packId>`. The final pack
+directory appears only via that single rename, so a refused or failed attempt
+never leaves a partial pack and multiple pack IDs / Effect versions stay
+isolated.
+
+### Remaining work (not in this slice)
+
+- CLI wiring for an `acquire`/`sync` command.
+- A real network transport adapter that stages an artifact before calling
+  `acquirePack`.
+- Detecting content drift of an already-cached pack (hashing existing pack
+  contents), which the read-only verifier does not do today.
+- `pin` / catalog-update workflows and `replace` policy surfacing.
 
 ## `GuidanceIngestor` — src/GuidanceIngestor.ts
 
