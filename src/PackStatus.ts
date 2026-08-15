@@ -15,8 +15,8 @@
  * input is explicit (callers pass the entries directly or load them from a
  * read-only baseline directory via {@link PackPlan.loadPackCatalog}); the
  * report never invents a remote source or "any newer" checkout. Candidate
- * baselines are reported as read-only availability for a future freshness
- * slice; no release-age or channel policy is applied here.
+ * baselines are reported as read-only availability for the freshness
+ * recommendation (issue #15); no release-age or channel policy is applied here.
  *
  * The distinction between `complete`, `mismatched`, and `verified`:
  * - `complete` — the exact pack is present and self-consistent (every file it
@@ -88,7 +88,8 @@ export type PackBaselineStatus = Schema.Schema.Type<typeof PackBaselineStatus>
  * baseline match (or `null`); `baselineVerification` the check of the local
  * pack against that baseline (present only when a baseline entry exists).
  * `candidateBaselines` are the catalog entries for the same package name that
- * are not the exact match, surfaced read-only for a future freshness slice.
+ * are not the exact match, surfaced read-only for the freshness recommendation
+ * (issue #15).
  * `status` is the aggregate {@link PackBaselineStatus}; `diagnostics` drive
  * exit policy and `message` is a human-readable summary.
  *

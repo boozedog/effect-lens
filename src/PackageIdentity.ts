@@ -16,11 +16,18 @@ import * as Schema from "effect/Schema"
 /**
  * Where a {@link PackageIdentity} was derived from. `lockfile` is preferred
  * because it is committed and reproducible; `installed` reflects what is on
- * disk; `package.json` is the declared intent.
+ * disk; `package.json` is the declared intent; `registry` is a candidate
+ * version observed from a registry snapshot (used by the read-only freshness
+ * recommendation, never a project dependency).
  *
  * @since 0.0.0
  */
-export const PackageSource = Schema.Literals(["package.json", "lockfile", "installed"])
+export const PackageSource = Schema.Literals([
+  "package.json",
+  "lockfile",
+  "installed",
+  "registry"
+])
 export type PackageSource = Schema.Schema.Type<typeof PackageSource>
 
 /**

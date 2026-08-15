@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema"
 import * as Drift from "../src/Drift.ts"
 import * as ExitStatus from "../src/ExitStatus.ts"
 import * as Finding from "../src/Finding.ts"
+import * as Freshness from "../src/Freshness.ts"
 import * as Guidance from "../src/Guidance.ts"
 import * as GuidanceIngestor from "../src/GuidanceIngestor.ts"
 import * as HookMutation from "../src/HookMutation.ts"
@@ -185,6 +186,55 @@ describe("Serialization round-trips", () => {
       message: "acquired reference pack pack-effect-109"
     })
     roundTrip(PackAcquire.AcquirePackResult, result)
+  })
+
+  it("FreshnessRecommendation (recommendation)", () => {
+    const resolution = Resolver.makeResolution({
+      expected: effect109,
+      installed: effect109,
+      lockfile: "pnpm-lock",
+      status: "resolved"
+    })
+    const recommendation = Freshness.makeFreshnessRecommendation({
+      project: "/abs/project",
+      cacheDir: "/abs/cache",
+      resolution,
+      installed: effect109,
+      declaredSpecifier: "4.0.0-rc.109",
+      channel: "rc",
+      candidate: PackageIdentity.makePackageIdentity({
+        name: "effect",
+        version: "4.0.0-rc.109",
+        source: "registry"
+      }),
+      candidatePublishedAt: "2026-01-10T00:00:00.000Z",
+      cooldown: Freshness.makeCooldownResult({
+        allowed: true,
+        minAgeDays: 0,
+        ageDays: 200,
+        publishedAt: "2026-01-10T00:00:00.000Z",
+        reason: "candidate is 200.0 days old (min 0)"
+      }),
+      packStatus: "available",
+      packId: "pack-effect-109",
+      status: "recommendation",
+      message: "recommend upgrading effect 4.0.0-rc.109 to 4.0.0-rc.109"
+    })
+    roundTrip(Freshness.FreshnessRecommendation, recommendation)
+  })
+
+  it("RegistrySnapshot", () => {
+    const snapshot = Freshness.makeRegistrySnapshot({
+      name: "effect",
+      distTags: { rc: "4.0.0-rc.109" },
+      versions: [
+        Freshness.makeRegistryVersion({
+          version: "4.0.0-rc.109",
+          publishedAt: "2026-01-10T00:00:00.000Z"
+        })
+      ]
+    })
+    roundTrip(Freshness.RegistrySnapshot, snapshot)
   })
 
   it("PackAcquisitionPlan (already-complete)", () => {

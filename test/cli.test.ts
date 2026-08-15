@@ -43,6 +43,7 @@ describe("CLI dispatch", () => {
     const { stdout, status } = runCli(["--help"])
     expect(status).toBe(0)
     expect(stdout).toContain("Usage: effect-lens <command>")
+    expect(stdout).toContain("freshness")
   })
 
   it("prints the version for --version and exits 0", () => {

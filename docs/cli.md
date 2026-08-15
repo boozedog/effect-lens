@@ -1,17 +1,18 @@
 # Effect Lens CLI
 
 The `effect-lens` CLI is a thin adapter over the shared core
-operations. It exposes six commands — `doctor`, `drift`, `check`, `setup`,
-`hooks`, and `packs` — that
+operations. It exposes seven commands — `doctor`, `drift`, `check`, `setup`,
+`hooks`, `packs`, and `freshness` — that
 inspect a project's Effect tooling and report findings and diagnostics with
 stable human-readable and machine-readable output and stable exit codes.
 
 The CLI never re-implements policy: every command delegates to the shared core
 operations in `src/operations/` and the shared contracts in `src/`. It never
 mutates project configuration. `doctor`, `drift`, `check`, `setup --dry-run`,
-`hooks status`, `packs plan`, and `packs status` are read-only and never fetch
-packs or mutate caches; `setup --apply`, `hooks install|uninstall`, and
-`packs fetch` are the explicit mutation surfaces.
+`hooks status`, `packs plan`, `packs status`, and `freshness` are read-only;
+`freshness` is the only network-backed command (it fetches an explicit registry
+snapshot); the rest never fetch packs or mutate caches. `setup --apply`,
+`hooks install|uninstall`, and `packs fetch` are the explicit mutation surfaces.
 
 ## Running the CLI
 
@@ -38,9 +39,12 @@ requires Node 23.6+ (or Node 22.6+ with `--experimental-strip-types`, which the
 | `-p, --project <dir>` | Project directory to inspect (default: current directory).                                         |
 | `--workspace <pkg>`   | Explicit workspace/package target relative to `--project` (monorepos).                             |
 | `-c, --cache <dir>`   | Reference-pack cache directory (default: `$XDG_CACHE_HOME/effect-lens` or `~/.cache/effect-lens`). |
-| `--catalog <dir>`     | Reference-pack catalog baseline directory (packs status/plan/fetch only).                          |
+| `--catalog <dir>`     | Reference-pack catalog baseline directory (packs status/plan/fetch and freshness).                 |
 | `--id <pack-id>`      | Exact catalog entry id to fetch (packs fetch only).                                                |
 | `--replace`           | Replace a divergent cached pack (packs fetch only).                                                |
+| `--cooldown-days <n>` | Minimum release age in days before a candidate is recommended (freshness only).                    |
+| `--registry <url>`    | Registry endpoint (freshness only; default `https://registry.npmjs.org`).                          |
+| `--exclude <ver>`     | Exclude a version from recommendation (freshness only; repeatable).                                |
 | `-j, --json`          | Emit machine-readable JSON instead of human-readable text.                                         |
 | `-h, --help`          | Print usage.                                                                                       |
 | `-v, --version`       | Print the version.                                                                                 |
@@ -59,7 +63,7 @@ effect-lens doctor --project . --workspace packages/foldkit --cache ~/.cache/eff
 `--project` is always the repository root (the lockfile and configuration
 boundary). `--workspace` selects a package relative to that root and is used by
 the resolution-based commands (`doctor`, `drift`, `setup --dry-run`,
-`packs plan`, and `packs status`); `check` and `hooks` are unaffected because
+`packs plan`, `packs status`, and `freshness`); `check` and `hooks` are unaffected because
 they do not resolve the Effect dependency.
 
 Resolution precedence for the _expected_ Effect identity:
@@ -216,7 +220,7 @@ pack as one of `unresolved`, `absent`, `stale`, `corrupt`, `complete`,
 
 The report also lists the same-name `candidateBaselines` the catalog offers
 (catalog entries for `effect` that are not the exact target) as read-only
-availability for a future freshness recommendation. No release-age, channel,
+availability for the freshness recommendation (issue #15). No release-age, channel,
 or ordering policy is applied here.
 
 ### `effect-lens packs plan`
@@ -265,19 +269,72 @@ version/source/integrity mismatches and malformed artifacts are refused before
 any final cache mutation. Failures are reported as short, actionable
 diagnostics without printing secrets or arbitrary response bodies.
 
+### `effect-lens freshness`
+
+Advises on the newest Effect version allowed by the channel and
+release-age/cooldown policy, and the required reference pack. It is the
+network-backed, read-only freshness surface (issue #15): it resolves the
+project's Effect identity, fetches an explicit registry snapshot, and reports
+the installed version, declared channel, newest allowed candidate, cooldown/age
+result, and the candidate's reference-pack status.
+
+```sh
+effect-lens freshness --project . --workspace packages/foldkit --cache ~/.cache/effect-lens --catalog ./catalog --json
+```
+
+`freshness` is the ONLY network-backed command. It fetches the `effect` package
+metadata from the npm registry (or `--registry <url>`) using an explicit HTTP
+client; it never invokes `npm` and never mutates package manifests, lockfiles,
+or pack caches. It is strictly read-only and advisory — dependency mutation is
+left to Nub.
+
+Options:
+
+- `--catalog <dir>` — optional reference-pack catalog baseline. When provided,
+  the recommendation reports the candidate's pack status (`available`,
+  `not-cached`, or `catalog-missing`); without it the pack status is `unknown`.
+- `--cooldown-days <n>` — minimum release age in days before a candidate is
+  recommended (default `0`).
+- `--registry <url>` — registry endpoint (default `https://registry.npmjs.org`).
+- `--exclude <ver>` — exclude a version from recommendation (repeatable).
+
+The recommendation classifies the outcome as one of:
+
+- `recommendation` — a newer allowed candidate exists and passes the cooldown.
+  Exit `1` (warning).
+- `cooldown` — a newer allowed candidate exists but fails the cooldown. Exit `1`.
+- `up-to-date` — the installed version is the newest allowed candidate. Exit `0`.
+- `no-candidate` — no newer allowed candidate could be selected. Exit `0`.
+- `unresolved` — no exact installed Effect version could be derived. Exit `2`.
+- `network-error` — the registry snapshot could not be fetched. Exit `1`.
+
+Channel policy: a project may move to any prerelease channel at or after its
+declared channel in `alpha < beta < rc < stable` order. A beta project MAY be
+recommended an RC, but only because the policy explicitly permits it — a beta
+range is never assumed to include an RC. The policy is injectable and
+documented in `docs/contracts.md`.
+
+A missing candidate pack is reported as an actionable `catalog-missing` /
+`not-cached` result, never fetched implicitly.
+
 ## Offline, read-only, and mutation behavior
 
 `doctor`, `drift`, `check`, `setup --dry-run`, `hooks status`, `packs plan`,
-and `packs status` are strictly read-only:
+`packs status`, and `freshness` are strictly read-only:
 
-- They never fetch reference packs or any network resource.
-- They never mutate caches, lockfiles, `package.json`, or any project
-  configuration.
+- They never mutate package manifests, lockfiles, or any project configuration.
+- `doctor`, `drift`, `check`, `setup --dry-run`, `hooks status`, `packs plan`,
+  and `packs status` never fetch any network resource.
+- `freshness` is the only network-backed command: it fetches an explicit
+  registry snapshot and never mutates anything. Offline commands remain
+  offline; `freshness` requires network access to the registry and reports a
+  `network-error` result when the fetch fails.
 - `check` writes a temporary oxlint config to the OS temp directory and removes
   it afterwards; it never writes into the project.
 - `setup --dry-run` and `hooks status` never write hook files, oxlint config,
   dependencies, or packs.
-- `packs plan` and `packs status` never write, delete, or update cache files.
+- `packs plan`, `packs status`, and `freshness` never write, delete, or update
+  cache files.
 
 `setup --apply`, `hooks install|uninstall`, and `packs fetch` are the explicit
 mutation surfaces. They require an explicit command/flag and never mutate
@@ -303,8 +360,14 @@ check passes; it never touches project configuration.
   adapter can be added later without changing the executor.
 - `packs status` reports baseline availability from the explicit local catalog
   only. It does not query a registry or apply release-age/channel policy; that
-  is the read-only freshness recommendation surface (issue #15), which will
-  build on this baseline report.
+  is the read-only freshness recommendation surface (issue #15), which builds
+  on this baseline report and is exposed as the `freshness` command.
+- `freshness` requires network access to the npm registry (or `--registry`). It
+  is the only network-backed command; offline commands remain offline. A
+  registry fetch failure is reported as a `network-error` result, never a
+  crash. The channel policy default is the "more mature" rule (a project may
+  move to any channel at or after its declared channel); a stricter policy is
+  injectable but not yet exposed as a CLI flag.
 - The CLI requires Node's native type stripping (Node 23.6+, or 22.6+ with
   `--experimental-strip-types`).
 

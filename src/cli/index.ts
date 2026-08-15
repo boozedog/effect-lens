@@ -4,15 +4,17 @@
  *
  * A thin adapter over the shared core operations. It parses
  * arguments with Node's standard library, dispatches to the `doctor`, `drift`,
- * `check`, `setup`, `hooks`, and `packs` commands, renders human or JSON
- * output, and sets the process exit code from the resulting
+ * `check`, `setup`, `hooks`, `packs`, and `freshness` commands, renders human
+ * or JSON output, and sets the process exit code from the resulting
  * {@link MachineOutput} (0 ok, 1 warning, 2 error). It never re-implements
  * policy; `setup --apply`, `hooks install|uninstall`, and `packs fetch` are
- * the explicit mutation paths; every other command (including `packs plan` and
- * `packs status`) is read-only.
+ * the explicit mutation paths; every other command (including `packs plan`,
+ * `packs status`, and `freshness`) is read-only. `freshness` is the only
+ * network-backed command; it is run with `Effect.runPromise`.
  *
  * @since 0.0.0
  */
+import * as Effect from "effect/Effect"
 import { homedir } from "node:os"
 import { resolve } from "node:path"
 import { parseArgs } from "node:util"
@@ -20,6 +22,7 @@ import { Exit } from "../ExitStatus.ts"
 import { check } from "./commands/check.ts"
 import { doctor } from "./commands/doctor.ts"
 import { drift } from "./commands/drift.ts"
+import { freshness } from "./commands/freshness.ts"
 import { hooks, hooksInstall, hooksUninstall } from "./commands/hooks.ts"
 import { packsFetch, packsPlan, packsStatus } from "./commands/packs.ts"
 import { setup, setupApply } from "./commands/setup.ts"
@@ -37,14 +40,18 @@ Commands:
   setup    Build a setup plan (requires --dry-run or --apply).
   hooks    Manage hook-manager checks (subcommand: status, install, uninstall).
   packs    Report, plan, or explicitly fetch reference packs (subcommand: status, plan, fetch).
+  freshness  Advise on the newest allowed Effect version and reference pack (network-backed).
 
 Options:
   -p, --project <dir>   Project directory (default: current directory)
       --workspace <pkg> Explicit workspace/package target relative to --project
   -c, --cache <dir>     Reference-pack cache directory
-      --catalog <dir>   Reference-pack catalog baseline directory (packs only)
+      --catalog <dir>   Reference-pack catalog baseline directory (packs/freshness)
       --id <pack-id>    Exact catalog entry id to fetch (packs fetch only)
       --replace         Replace a divergent cached pack (packs fetch only)
+      --cooldown-days <n>  Minimum release age in days before a candidate is recommended (freshness only)
+      --registry <url>  Registry endpoint (freshness only; default https://registry.npmjs.org)
+      --exclude <ver>   Exclude a version from recommendation (freshness only; repeatable)
   -j, --json            Emit machine-readable JSON output
       --path <path>     File or directory to lint (check only; relative to --project)
       --dry-run         Build a read-only setup plan (setup only)
@@ -80,6 +87,9 @@ const main = (): void => {
     catalog?: string
     id?: string
     replace?: boolean
+    "cooldown-days"?: string
+    registry?: string
+    exclude?: Array<string>
     help?: boolean
     version?: boolean
   }
@@ -102,6 +112,9 @@ const main = (): void => {
         catalog: { type: "string" },
         id: { type: "string" },
         replace: { type: "boolean" },
+        "cooldown-days": { type: "string" },
+        registry: { type: "string" },
+        exclude: { type: "string", multiple: true },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" }
       },
@@ -190,6 +203,28 @@ const main = (): void => {
         return
       }
       break
+    case "freshness":
+      Effect.runPromise(freshness({
+        projectDir,
+        cacheDir,
+        workspace: context.workspace,
+        ...(values.catalog === undefined ? {} : { catalogDir: resolve(values.catalog) }),
+        ...(values["cooldown-days"] === undefined
+          ? {}
+          : { cooldownDays: Number(values["cooldown-days"]) || 0 }),
+        ...(values.registry === undefined ? {} : { registryUrl: values.registry }),
+        ...(values.exclude === undefined ? {} : { exclude: values.exclude })
+      })).then(
+        (freshnessResult) => {
+          render(freshnessResult, { json })
+          process.exitCode = freshnessResult.machineOutput.status
+        },
+        (err) => {
+          process.stderr.write(`error: ${(err as Error).message}\n`)
+          process.exitCode = Exit.Error
+        }
+      )
+      return
     case "packs":
       if (positionals[1] === "status") {
         if (values.catalog === undefined) {

@@ -138,10 +138,12 @@ A single traceable piece of evidence for a guidance item or finding.
 Literal union:
 
 ```json
-"package.json" | "lockfile" | "installed"
+"package.json" | "lockfile" | "installed" | "registry"
 ```
 
-`lockfile` is preferred for reproducibility; `installed` reflects disk state.
+`lockfile` is preferred for reproducibility; `installed` reflects disk state;
+`registry` marks a candidate version observed from a registry snapshot (used by
+the read-only freshness recommendation, never a project dependency).
 
 ### `PackageIdentity`
 
@@ -631,6 +633,160 @@ to the catalog is reported as `mismatched`. `candidateBaselines` are the
 catalog entries for the same package name that are not the exact match, sorted
 deterministically by id and reported as read-only availability only — no
 release-age, channel, or ordering policy is applied here.
+
+## `Freshness` — src/Freshness.ts
+
+Read-only freshness recommendation for a project's Effect dependency (issue
+#15). It answers: "given the project's installed/declared Effect version and an
+explicit registry snapshot, what is the newest Effect release allowed by the
+channel and release-age/cooldown policy, and does a reference pack exist for
+it?" It is the network-backed counterpart to the offline `drift`/`packs status`
+slices: it consumes an explicit, injectable registry snapshot and never
+performs network I/O itself. It is strictly read-only and advisory — it never
+mutates package manifests, lockfiles, or pack caches, and it never selects a
+reference pack implicitly (a missing candidate pack is reported as an
+actionable `catalog-missing` / `not-cached` result, not fetched). Dependency
+mutation is left to Nub.
+
+### `Channel`
+
+```json
+"alpha" | "beta" | "rc" | "stable" | "other"
+```
+
+The prerelease maturity channel of an Effect version. `stable` is a release
+with no prerelease; `other` is a prerelease whose first identifier is not a
+known channel. `channelOf(version)` and `channelOfSpecifier(specifier)`
+classify exact versions and declared specifiers (including ranges).
+
+### `ChannelPolicy`
+
+```ts
+interface ChannelPolicy {
+  readonly allowedTargets: (declared: Channel) => ReadonlyArray<Channel>
+}
+```
+
+Decides which prerelease channels a project may move to. The default
+`defaultChannelPolicy` is the "more mature" rule: a project may move to any
+channel at or after its declared channel in `alpha < beta < rc < stable` order.
+A beta project MAY be recommended an RC, but only because the policy explicitly
+permits it — a beta range is never assumed to include an RC. The policy is
+injectable so a stricter rule (e.g. same-channel-only) can be tested.
+
+### `CooldownPolicy`
+
+```ts
+interface CooldownPolicy {
+  readonly minAgeDays: number
+  readonly perChannel?: Partial<Record<Channel, number>>
+}
+```
+
+The release-age/cooldown policy. `minAgeDays` is the minimum age (in days) a
+candidate must have before it is recommended; `perChannel` optionally overrides
+it for a specific channel. The default is `{ minAgeDays: 0 }` (no cooldown);
+projects opt in via `--cooldown-days` or an injected policy.
+
+### `RegistryVersion` and `RegistrySnapshot`
+
+```json
+{
+  "name": "effect",
+  "distTags": { "rc": "4.0.0-rc.109" },
+  "versions": [{ "version": "4.0.0-rc.109", "publishedAt": "2026-01-10T00:00:00.000Z | null" }]
+}
+```
+
+An explicit, injectable snapshot of a package's registry state: the dist-tags
+(informational) and every version with its publish timestamp. This is the ONLY
+place the recommendation learns about available versions; it never invents a
+version or consults a remote itself. `src/RegistryClient.ts` provides the
+injectable `RegistryClient` interface and an `npmRegistryClient` that fetches
+this snapshot from the npm registry with Node's global `fetch` (never `npm`).
+
+### `CooldownResult`
+
+```json
+{
+  "allowed": true,
+  "minAgeDays": 0,
+  "ageDays": 200.0 | null,
+  "publishedAt": "2026-01-10T00:00:00.000Z | null",
+  "reason": "candidate is 200.0 days old (min 0) | null"
+}
+```
+
+The result of applying the cooldown policy to a candidate.
+
+### `CandidatePackStatus`
+
+```json
+"available" | "not-cached" | "catalog-missing" | "unknown"
+```
+
+The reference-pack availability for a recommended candidate. `available` — a
+catalog entry exists and its pack is cached and verified; `not-cached` — a
+catalog entry exists but the pack is not cached/verified; `catalog-missing` —
+no catalog entry provides the candidate version; `unknown` — no catalog was
+provided.
+
+### `FreshnessStatus`
+
+```json
+"unresolved" | "network-error" | "up-to-date" | "recommendation" | "cooldown" | "no-candidate"
+```
+
+- `unresolved` — no exact installed Effect version could be derived.
+- `network-error` — the registry snapshot could not be fetched.
+- `up-to-date` — the installed version is the newest allowed candidate.
+- `recommendation` — a newer allowed candidate exists and passes cooldown.
+- `cooldown` — a newer allowed candidate exists but fails the cooldown.
+- `no-candidate` — no newer allowed candidate could be selected.
+
+### `FreshnessRecommendation`
+
+```json
+{
+  "project": "/abs/project",
+  "cacheDir": "/abs/cache",
+  "workspace": "packages/foldkit | null",
+  "resolution": { "…": "…" },
+  "installed": { "name": "effect", "version": "4.0.0-beta.83", "source": "installed", "integrity": null } | null,
+  "declaredSpecifier": "4.0.0-beta.83 | null",
+  "channel": "beta | null",
+  "candidate": { "name": "effect", "version": "4.0.0-rc.109", "source": "registry", "integrity": null } | null,
+  "candidatePublishedAt": "2026-01-10T00:00:00.000Z | null",
+  "cooldown": { "allowed": true, "…": "…" } | null,
+  "packStatus": "catalog-missing | null",
+  "packId": "pack-effect-109 | null",
+  "excluded": [],
+  "status": "recommendation",
+  "diagnostics": [],
+  "message": "recommend upgrading effect 4.0.0-beta.83 to 4.0.0-rc.109 | null"
+}
+```
+
+`computeFreshnessRecommendation({ project, cacheDir, resolution, registry,
+channelPolicy?, cooldownPolicy?, excludedVersions?, now?, catalog? })` computes
+the recommendation from an explicit registry snapshot and the policy. Decision
+rules:
+
+1. No exact installed version → `unresolved`.
+2. No newer allowed candidate: installed is the newest allowed version →
+   `up-to-date`; otherwise → `no-candidate`.
+3. A newer allowed candidate exists: cooldown passes → `recommendation`;
+   cooldown fails → `cooldown`.
+
+Candidate selection filters registry versions to the allowed channels, drops
+excluded versions, keeps only versions newer than the installed version, and
+picks the newest by semver. The candidate's reference-pack status is computed
+from the explicit catalog and the on-disk cache (read-only).
+
+`src/operations/freshness.ts` exposes `buildFreshnessRecommendation`, an Effect
+program that resolves the project identity, fetches the registry snapshot via
+an injected `RegistryClient`, and maps a fetch failure to a `network-error`
+recommendation (the effect never fails).
 
 ## `PackAcquire` — src/PackAcquire.ts
 
