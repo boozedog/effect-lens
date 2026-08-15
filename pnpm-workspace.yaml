@@ -1,9 +1,0 @@
-onlyBuiltDependencies:
-  - dprint
-  - msgpackr-extract
-allowBuilds:
-  dprint: true
-  msgpackr-extract: true
-minimumReleaseAgeExclude:
-  - '@effect/vitest@4.0.0-rc.109'
-  - effect@4.0.0-rc.109

@@ -8,7 +8,7 @@ check.
 ## Running
 
 ```sh
-pnpm dogfood
+nub run dogfood
 ```
 
 This runs five self-checks against the repository root, each via the real CLI
@@ -35,9 +35,10 @@ inspect (`package.json`, `.oxlintrc.json`, `.oxlintrc`, `lefthook.yml`,
 `.husky/**` files) before and after running, and assert they are unchanged, so
 the read-only guarantee is proven against the real CLI.
 
-`pnpm dogfood` is part of the canonical validation path: `pnpm verify` runs it
-after lint, format, typecheck, and tests, and `pnpm release:check` (the release
-self-review gate) runs the full `pnpm verify` path. See `docs/ci.md`.
+`nub run dogfood` is part of the canonical validation path: `nub run verify`
+runs it after lint, format, typecheck, and tests, and `nub run release:check`
+(the release self-review gate) runs the full `nub run verify` path. See
+`docs/ci.md`.
 
 ## Bootstrap boundary
 
@@ -71,13 +72,13 @@ pinned Effect version changes, the matching fixture pack must be added to
 `test/fixtures/cache` and the expected version assertion follows automatically
 from `package.json`.
 
-The committed cache is validated by `pnpm policy` (see `docs/ci.md`): every
+The committed cache is validated by `nub run policy` (see `docs/ci.md`): every
 production pack manifest must decode, declare `complete`, and have every
 included file present on disk.
 
 ## Future work
 
-- **Waiver enforcement in the CLI** — `pnpm policy` validates the committed
+- **Waiver enforcement in the CLI** — `nub run policy` validates the committed
   `waivers.json` (schema and scope/path consistency), but the CLI does not yet
   apply waivers to findings. Applying waivers to `check` output is deferred.
 - **Live upstream drift** — `drift` remains a local, offline slice; comparing

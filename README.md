@@ -29,17 +29,32 @@ Most commands are read-only; `setup --apply`, `hooks install|uninstall`, and
 
 ## CLI
 
-The CLI is a thin adapter over the shared core operations. Run `pnpm cli -- --help`
+The CLI is a thin adapter over the shared core operations. Run `nub run cli -- --help`
 from this repository, or `effect-lens --help` from a checked-out project. See
 `docs/cli.md` for details.
 
+## Development
+
+This repository uses **Nub** (pinned `0.7.5`, declared in the `packageManager`
+and `devEngines.packageManager` fields of `package.json`) as its exclusive
+package manager. Nub reads the committed `pnpm-lock.yaml` directly, so a clean
+checkout installs with:
+
+```sh
+nub install --frozen-lockfile
+```
+
+All scripts are invoked through `nub run` (e.g. `nub run verify`); pnpm is
+neither required nor supported. The canonical validation path is
+`nub run verify` (see `docs/ci.md`).
+
 ## Self-dogfood
 
-Effect Lens checks Effect Lens itself. Run `pnpm dogfood` to verify the real
-CLI against this repository's production source, and `pnpm policy` to validate
+Effect Lens checks Effect Lens itself. Run `nub run dogfood` to verify the real
+CLI against this repository's production source, and `nub run policy` to validate
 the committed waivers, reference-pack manifests, and guidance metadata. Both are
-part of the canonical validation path (`pnpm verify`) and the release
-self-review gate (`pnpm release:check`), and are enforced in CI. See
+part of the canonical validation path (`nub run verify`) and the release
+self-review gate (`nub run release:check`), and are enforced in CI. See
 `docs/dogfood.md` and `docs/ci.md`.
 
 ## Shared core

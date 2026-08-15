@@ -24,7 +24,7 @@ effect-lens <command> [options]
 Within this repository, the same entrypoint is available as:
 
 ```sh
-pnpm cli -- <command> [options]
+nub run cli -- <command> [options]
 ```
 
 The CLI runs the TypeScript entrypoint with Node's native type stripping, so it

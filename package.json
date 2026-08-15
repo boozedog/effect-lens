@@ -6,7 +6,16 @@
   },
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.20.0",
+  "devDependencies": {
+    "@effect/vitest": "4.0.0-rc.109",
+    "@oxlint/plugins": "^1.78.0",
+    "@types/node": "^26.1.2",
+    "dprint": "^0.55.2",
+    "effect": "4.0.0-rc.109",
+    "oxlint": "^1.78.0",
+    "typescript": "^5.9.0",
+    "vitest": "4.1.10"
+  },
   "engines": {
     "node": ">=22.6"
   },
@@ -19,19 +28,22 @@
     "lint": "oxlint",
     "format": "dprint fmt",
     "format:check": "dprint check",
-    "verify": "pnpm lint && pnpm format:check && pnpm check && pnpm test && pnpm dogfood && pnpm policy",
+    "verify": "nub run pm-guard && nub run lint && nub run format:check && nub run check && nub run test && nub run dogfood && nub run policy",
     "dogfood": "node scripts/dogfood.mjs",
     "policy": "node --experimental-strip-types scripts/policy.mjs",
-    "release:check": "pnpm verify"
+    "pm-guard": "node scripts/package-manager-guard.mjs",
+    "release:check": "nub run verify"
   },
-  "devDependencies": {
-    "@effect/vitest": "4.0.0-rc.109",
-    "@oxlint/plugins": "^1.78.0",
-    "@types/node": "^26.1.2",
-    "dprint": "^0.55.2",
-    "effect": "4.0.0-rc.109",
-    "oxlint": "^1.78.0",
-    "typescript": "^5.9.0",
-    "vitest": "4.1.10"
-  }
+  "devEngines": {
+    "packageManager": {
+      "name": "nub",
+      "version": "^0.7.5",
+      "onFail": "ignore"
+    }
+  },
+  "allowBuilds": {
+    "dprint": true,
+    "msgpackr-extract": true
+  },
+  "packageManager": "nub@0.7.5"
 }
