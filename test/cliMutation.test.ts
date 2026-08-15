@@ -10,9 +10,9 @@
  */
 import { describe, expect, it } from "@effect/vitest"
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const ENTRY = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url))
@@ -39,6 +39,52 @@ const hkProject = (): string => {
     `amends "package://github.com/jdx/hk/releases/download/v1.55.0/hk@1.55.0#/Config.pkl"\n\nhooks {\n  ["pre-commit"] {\n    steps {\n      ["lint"] {\n        check = "pnpm lint"\n      }\n    }\n  }\n}\n`
   )
   return dir
+}
+
+/**
+ * Creates a temporary catalog directory with a single `pack-effect-109` entry
+ * whose `sourceUrl` points at a temporary source directory containing the
+ * included files plus a matching `manifest.json`. Returns the catalog dir.
+ *
+ * @since 0.0.0
+ */
+const packFixture = (): { catalogDir: string; cacheDir: string } => {
+  const root = mkdtempSync(join(tmpdir(), "effect-lens-packs-"))
+  const catalogDir = join(root, "catalog")
+  const sourceDir = join(root, "source")
+  const cacheDir = join(root, "cache")
+  mkdirSync(join(catalogDir, "pack-effect-109"), { recursive: true })
+  mkdirSync(join(sourceDir, "ai-docs"), { recursive: true })
+  mkdirSync(cacheDir, { recursive: true })
+  writeFileSync(join(sourceDir, "LLMS.md"), "# Effect")
+  writeFileSync(join(sourceDir, "ai-docs", "guide.md"), "guide")
+  const manifest = {
+    id: "pack-effect-109",
+    effectVersion: "4.0.0-rc.109",
+    packageIdentity: {
+      name: "effect",
+      version: "4.0.0-rc.109",
+      source: "lockfile",
+      integrity: null
+    },
+    upstream: {
+      repository: "effect-ts/effect",
+      ref: "v4.0.0-rc.109",
+      commit: "deadbeef",
+      sourceUrl: null
+    },
+    includedPaths: ["LLMS.md", "ai-docs/guide.md"],
+    sourceUrl: null,
+    integrity: null,
+    attribution: null,
+    status: "complete"
+  }
+  writeFileSync(join(sourceDir, "manifest.json"), JSON.stringify(manifest))
+  writeFileSync(
+    join(catalogDir, "pack-effect-109", "manifest.json"),
+    JSON.stringify({ ...manifest, sourceUrl: `file://${sourceDir}` })
+  )
+  return { catalogDir, cacheDir }
 }
 
 describe("hooks install|uninstall (CLI, hk)", () => {
@@ -123,6 +169,69 @@ describe("setup --apply (CLI, hk)", () => {
       expect(stdout).toContain("[applied] hooks")
     } finally {
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("packs fetch (CLI)", () => {
+  it("fetches an exact pack and emits JSON with exit 0", () => {
+    const { catalogDir, cacheDir } = packFixture()
+    try {
+      const { stdout, status } = runCli([
+        "packs",
+        "fetch",
+        "--project",
+        catalogDir,
+        "--cache",
+        cacheDir,
+        "--catalog",
+        catalogDir,
+        "--id",
+        "pack-effect-109",
+        "--json"
+      ])
+      expect(status).toBe(0)
+      const json = JSON.parse(stdout) as {
+        machineOutput: { status: number }
+        acquire: { action: string }
+      }
+      expect(json.machineOutput.status).toBe(0)
+      expect(json.acquire.action).toBe("acquired")
+      expect(existsSync(join(cacheDir, "pack-effect-109", "manifest.json"))).toBe(true)
+    } finally {
+      rmSync(dirname(catalogDir), { recursive: true, force: true })
+    }
+  })
+
+  it("exits 2 when --catalog or --id is missing", () => {
+    const { catalogDir, cacheDir } = packFixture()
+    try {
+      const missingCatalog = runCli([
+        "packs",
+        "fetch",
+        "--project",
+        catalogDir,
+        "--cache",
+        cacheDir,
+        "--id",
+        "pack-effect-109"
+      ])
+      expect(missingCatalog.status).toBe(2)
+      expect(missingCatalog.stderr).toContain("packs fetch requires --catalog")
+      const missingId = runCli([
+        "packs",
+        "fetch",
+        "--project",
+        catalogDir,
+        "--cache",
+        cacheDir,
+        "--catalog",
+        catalogDir
+      ])
+      expect(missingId.status).toBe(2)
+      expect(missingId.stderr).toContain("packs fetch requires --catalog <dir> and --id <pack-id>")
+    } finally {
+      rmSync(dirname(catalogDir), { recursive: true, force: true })
     }
   })
 })

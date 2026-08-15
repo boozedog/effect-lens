@@ -4,11 +4,11 @@
  *
  * A thin adapter over the shared core operations. It parses
  * arguments with Node's standard library, dispatches to the `doctor`, `drift`,
- * `check`, `setup`, and `hooks` commands, renders human or JSON output, and
- * sets the process exit code from the resulting {@link MachineOutput}
- * (0 ok, 1 warning, 2 error). It never re-implements policy; `setup --apply`
- * and `hooks install|uninstall` are the only explicit mutation paths; every
- * other command is read-only.
+ * `check`, `setup`, `hooks`, and `packs` commands, renders human or JSON
+ * output, and sets the process exit code from the resulting
+ * {@link MachineOutput} (0 ok, 1 warning, 2 error). It never re-implements
+ * policy; `setup --apply`, `hooks install|uninstall`, and `packs fetch` are
+ * the explicit mutation paths; every other command is read-only.
  *
  * @since 0.0.0
  */
@@ -20,6 +20,7 @@ import { check } from "./commands/check.ts"
 import { doctor } from "./commands/doctor.ts"
 import { drift } from "./commands/drift.ts"
 import { hooks, hooksInstall, hooksUninstall } from "./commands/hooks.ts"
+import { packsFetch, packsPlan } from "./commands/packs.ts"
 import { setup, setupApply } from "./commands/setup.ts"
 import { render } from "./output.ts"
 import type { CliResult } from "./types.ts"
@@ -34,10 +35,14 @@ Commands:
   check    Run the local read-only review path and aggregate findings.
   setup    Build a setup plan (requires --dry-run or --apply).
   hooks    Manage hook-manager checks (subcommand: status, install, uninstall).
+  packs    Plan or explicitly fetch reference packs (subcommand: plan, fetch).
 
 Options:
   -p, --project <dir>   Project directory (default: current directory)
   -c, --cache <dir>     Reference-pack cache directory
+      --catalog <dir>   Reference-pack catalog baseline directory (packs only)
+      --id <pack-id>    Exact catalog entry id to fetch (packs fetch only)
+      --replace         Replace a divergent cached pack (packs fetch only)
   -j, --json            Emit machine-readable JSON output
       --path <path>     File or directory to lint (check only; relative to --project)
       --dry-run         Build a read-only setup plan (setup only)
@@ -69,6 +74,9 @@ const main = (): void => {
     path?: string
     "dry-run"?: boolean
     apply?: boolean
+    catalog?: string
+    id?: string
+    replace?: boolean
     help?: boolean
     version?: boolean
   }
@@ -87,6 +95,9 @@ const main = (): void => {
         path: { type: "string" },
         "dry-run": { type: "boolean" },
         apply: { type: "boolean" },
+        catalog: { type: "string" },
+        id: { type: "string" },
+        replace: { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" }
       },
@@ -165,6 +176,43 @@ const main = (): void => {
       } else {
         process.stderr.write(
           `error: unknown hooks subcommand: ${positionals[1] ?? "(none)"}\n\n${USAGE}`
+        )
+        process.exitCode = Exit.Error
+        return
+      }
+      break
+    case "packs":
+      if (positionals[1] === "plan") {
+        if (values.catalog === undefined) {
+          process.stderr.write(
+            `error: packs plan requires --catalog <dir>\n\n${USAGE}`
+          )
+          process.exitCode = Exit.Error
+          return
+        }
+        result = packsPlan({
+          projectDir,
+          cacheDir,
+          catalogDir: resolve(values.catalog)
+        })
+      } else if (positionals[1] === "fetch") {
+        if (values.catalog === undefined || values.id === undefined) {
+          process.stderr.write(
+            `error: packs fetch requires --catalog <dir> and --id <pack-id>\n\n${USAGE}`
+          )
+          process.exitCode = Exit.Error
+          return
+        }
+        result = packsFetch({
+          projectDir,
+          cacheDir,
+          catalogDir: resolve(values.catalog),
+          packId: values.id,
+          replace: values.replace === true
+        })
+      } else {
+        process.stderr.write(
+          `error: unknown packs subcommand: ${positionals[1] ?? "(none)"}\n\n${USAGE}`
         )
         process.exitCode = Exit.Error
         return

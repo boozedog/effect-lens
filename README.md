@@ -3,7 +3,7 @@
 Effect Lens is an advisory tool for Effect v4 TypeScript development. It ships a
 CLI (`effect-lens doctor`, `effect-lens drift`, `effect-lens check`, `effect-lens
 setup --dry-run` / `setup --apply`, `effect-lens hooks status` / `install` /
-`uninstall`) that inspects a project's Effect tooling, reports findings and
+`uninstall`, `effect-lens packs plan` / `packs fetch`) that inspects a project's Effect tooling, reports findings and
 diagnostics with stable human-readable and machine-readable output and stable
 exit codes, and sets up the `hk` hook-manager check explicitly. See
 `docs/cli.md` for the command reference, read-only/mutation behavior, and
@@ -18,12 +18,14 @@ Planned surfaces:
   for the explicit mutating hooks install.
 - `effect-lens hooks status` / `install` / `uninstall` for hook-manager
   inspection and explicit `hk` hook mutation.
+- `effect-lens packs plan` / `packs fetch` for read-only reference-pack
+  acquisition planning and explicit, verified pack acquisition.
 - `effect_lens_lookup` for local Effect guidance and source lookup.
 - `effect_lens_review` for AST/type-aware code review.
 - `effect_lens_design` for Effect-first implementation guidance.
 
-Most commands are read-only; `setup --apply` and `hooks install|uninstall` are
-the explicit mutation surfaces and never mutate implicitly.
+Most commands are read-only; `setup --apply`, `hooks install|uninstall`, and
+`packs fetch` are the explicit mutation surfaces and never mutate implicitly.
 
 ## CLI
 
@@ -73,8 +75,27 @@ cache files, and it never adds implicit network behavior to `doctor`, `drift`,
 `lookup`, or guidance ingestion. The explicit acquisition executor
 `src/PackAcquire.ts` (`acquirePack`) verifies and atomically promotes a chosen
 pack through an injected, synchronous transport; it is never invoked implicitly
-and performs no network I/O itself. CLI wiring and a real network transport
-adapter are still to come.
+and performs no network I/O itself.
+
+The `packs` CLI surface exposes this explicitly:
+
+```sh
+effect-lens packs plan --project . --cache <dir> --catalog <dir> --json
+effect-lens packs fetch --project . --cache <dir> --catalog <dir> --id <pack-id> --json
+```
+
+`packs plan` is read-only. `packs fetch` is the only command that invokes a
+transport: it requires an explicit `--catalog` and an exact `--id`, stages the
+artifact via the local-directory transport (`src/PackTransport.ts`), and hands
+it to `acquirePack`, which verifies identity, version, integrity, path-traversal
+and symlink safety, and content completeness before atomically promoting the
+pack into the cache. The supported artifact format for this slice is a single
+local directory (the catalog entry's `sourceUrl` points at a directory
+containing the included files plus a `manifest.json`); no remote or archive
+format is supported yet. An existing complete pack is a safe no-op; `--replace`
+is only needed to recover a divergent cached pack. See `docs/cli.md` and
+`docs/contracts.md` for the
+command usage, artifact format, offline boundary, and cache-mutation behavior.
 
 ## Strict rule layer
 

@@ -555,9 +555,9 @@ Explicit reference-pack acquisition with verification and atomic cache
 promotion. This is the mutating counterpart to the read-only `PackPlan`
 planner: given an explicit, exact catalog entry and an injected transport, it
 verifies the fetched artifact and atomically promotes a complete pack into the
-cache. Acquisition is NEVER implicit — no CLI command, plan, doctor, drift,
-lookup, or guidance-ingestion path invokes it, and it performs no network I/O
-itself.
+cache. Acquisition is NEVER implicit — only the explicit `packs fetch` CLI
+command invokes it (via the `PackTransport` boundary); no plan, doctor, drift,
+lookup, or guidance-ingestion path does, and it performs no network I/O itself.
 
 ### `AcquirePackAction`
 
@@ -645,12 +645,71 @@ isolated.
 
 ### Remaining work (not in this slice)
 
-- CLI wiring for an `acquire`/`sync` command.
-- A real network transport adapter that stages an artifact before calling
-  `acquirePack`.
+- A real network (HTTP) transport adapter that stages an artifact before calling
+  `acquirePack`. The transport boundary is injectable, so this can be added
+  without changing the executor.
 - Detecting content drift of an already-cached pack (hashing existing pack
   contents), which the read-only verifier does not do today.
-- `pin` / catalog-update workflows and `replace` policy surfacing.
+- `pin` / catalog-update workflows and `replace` policy surfacing beyond the
+  explicit `--replace` flag.
+
+## `PackTransport` — src/PackTransport.ts
+
+The explicit pack artifact transport for reference-pack acquisition. It
+defines exactly ONE supported artifact format for this slice: a local
+directory (the "source") containing the pack's included files plus a decodable
+`manifest.json`. The catalog entry's `sourceUrl` points at that directory,
+either as a `file://` URL or as a plain filesystem path. The transport stages
+the directory into a temporary location and returns it to `acquirePack`; it
+never mutates the source and performs no network I/O.
+
+### The transport boundary
+
+`stageLocalDirectory(entry)` returns the narrow, synchronous transport result:
+
+```ts
+type TransportResult =
+  | { ok: true; stagedDir: string }
+  | { ok: false; reason: string }
+```
+
+`localDirectoryTransport()` builds a `PackArtifactTransport` (the
+`PackAcquire` boundary) that calls `stageLocalDirectory`. The transport is
+injectable, so tests exercise success and failure without any live network.
+
+### Artifact format (this slice)
+
+- The source is a single local directory addressed by the catalog entry's
+  `sourceUrl` (`file://` URL or plain path).
+- A `file://` URL is converted with `fileURLToPath`; a URL with any other scheme
+  (for example `https://`) is refused as unsupported. A plain path is resolved
+  against the current working directory, so catalogs SHOULD use absolute
+  `file://` URLs to avoid depending on the invocation directory.
+- It contains the pack's included files (as listed in `includedPaths`) plus a
+  `manifest.json` that decodes to a `PackManifest` matching the catalog entry
+  (same `id`, exact package name+version, same `includedPaths`).
+- The transport copies the directory into a fresh temp directory (preserving
+  symlinks as symlinks so the executor's path-traversal/symlink checks still
+  apply) and returns it as the staged artifact.
+- No tarball/archive or remote (HTTP) format is supported in this slice; the
+  transport boundary is narrow and injectable so a network adapter can be
+  added later without changing the executor.
+
+### Failure behavior
+
+`stageLocalDirectory` refuses (returns `{ ok: false, reason }`) when the
+`sourceUrl` is missing, unsupported, or points at a missing or non-directory
+path. Reasons are short and non-secret; the transport never prints credentials,
+remote response bodies, or arbitrary fetched content. The executor surfaces a
+refusal as a `failed` acquisition with the `acq-transport-failed` diagnostic.
+
+### Offline boundary
+
+The transport is only ever invoked through an explicit call to
+`acquirePack` (via the `packs fetch` CLI command). No other command, plan,
+doctor, drift, lookup, or guidance-ingestion path invokes a transport, so
+`doctor`, `drift`, `lookup`, guidance ingestion, and planning remain offline
+and read-only.
 
 ## `GuidanceIngestor` — src/GuidanceIngestor.ts
 

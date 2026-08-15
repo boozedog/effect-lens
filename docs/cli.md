@@ -1,14 +1,17 @@
 # Effect Lens CLI
 
 The `effect-lens` CLI is a thin adapter over the shared core
-operations. It exposes five commands — `doctor`, `drift`, `check`, `setup`, and
-`hooks` — that
+operations. It exposes six commands — `doctor`, `drift`, `check`, `setup`,
+`hooks`, and `packs` — that
 inspect a project's Effect tooling and report findings and diagnostics with
 stable human-readable and machine-readable output and stable exit codes.
 
 The CLI never re-implements policy: every command delegates to the shared core
 operations in `src/operations/` and the shared contracts in `src/`. It never
-fetches packs, never mutates caches, and never mutates project configuration.
+mutates project configuration. `doctor`, `drift`, `check`, `setup --dry-run`,
+`hooks status`, and `packs plan` are read-only and never fetch packs or mutate
+caches; `setup --apply`, `hooks install|uninstall`, and `packs fetch` are the
+explicit mutation surfaces.
 
 ## Running the CLI
 
@@ -142,10 +145,56 @@ effect-lens hooks install --project . --json
 effect-lens hooks uninstall --project . --json
 ```
 
+### `effect-lens packs plan`
+
+Builds a read-only reference-pack acquisition plan over the project's exact
+Effect identity and an explicit catalog baseline. It is a thin adapter over
+the shared-core `planPackAcquisition` planner and never fetches, writes,
+deletes, or updates cache files.
+
+```sh
+effect-lens packs plan --project . --cache ~/.cache/effect-lens --catalog ./catalog --json
+```
+
+`--catalog <dir>` is required and must be a directory of catalog entries, one
+per subdirectory (`<catalogDir>/<id>/manifest.json`), loaded with
+`loadPackCatalog`. The plan classifies the local pack state
+(`already-complete`, `fetch-required`, `stale-pack-present`,
+`partial-pack-present`, `catalog-entry-missing`, `resolution-unavailable`) and
+returns an ordered, JSON-serializable plan. See `docs/contracts.md` for the
+`PackPlan` contracts.
+
+### `effect-lens packs fetch`
+
+Explicitly acquires an exact reference pack into the cache. It is the only
+command that invokes a pack transport; no other command fetches implicitly.
+It requires an explicit `--catalog <dir>` and an exact `--id <pack-id>`
+selection, loads the matching catalog entry, and invokes the shared
+`acquirePack` executor with the local-directory transport.
+
+```sh
+effect-lens packs fetch --project . --cache ~/.cache/effect-lens --catalog ./catalog --id pack-effect-109 --json
+```
+
+The supported artifact format for this slice is a single local directory: the
+catalog entry's `sourceUrl` points at a directory containing the pack's
+included files plus a decodable `manifest.json` (as a `file://` URL or a plain
+filesystem path). The transport stages that directory and hands it to
+`acquirePack`, which verifies identity, version, integrity, path-traversal and
+symlink safety, and content completeness before atomically promoting the pack
+into `cacheDir/<packId>`. See `docs/contracts.md` for the `PackTransport` and
+`PackAcquire` contracts.
+
+An existing complete pack is a safe no-op (`already-present`, exit `0`); a
+divergent cached pack is refused unless `--replace` is passed. Exact
+version/source/integrity mismatches and malformed artifacts are refused before
+any final cache mutation. Failures are reported as short, actionable
+diagnostics without printing secrets or arbitrary response bodies.
+
 ## Offline, read-only, and mutation behavior
 
-`doctor`, `drift`, `check`, `setup --dry-run`, and `hooks status` are strictly
-read-only:
+`doctor`, `drift`, `check`, `setup --dry-run`, `hooks status`, and
+`packs plan` are strictly read-only:
 
 - They never fetch reference packs or any network resource.
 - They never mutate caches, lockfiles, `package.json`, or any project
@@ -154,9 +203,13 @@ read-only:
   it afterwards; it never writes into the project.
 - `setup --dry-run` and `hooks status` never write hook files, oxlint config,
   dependencies, or packs.
+- `packs plan` never writes, deletes, or updates cache files.
 
-`setup --apply` and `hooks install|uninstall` are the explicit mutation
-surfaces. They require an explicit command/flag and never mutate implicitly.
+`setup --apply`, `hooks install|uninstall`, and `packs fetch` are the explicit
+mutation surfaces. They require an explicit command/flag and never mutate
+implicitly. `packs fetch` mutates only the reference-pack cache
+(`cacheDir/<packId>`), and only after every integrity, identity, and safety
+check passes; it never touches project configuration.
 
 ## Current limitations
 
@@ -170,6 +223,10 @@ surfaces. They require an explicit command/flag and never mutate implicitly.
 - `setup --apply` and `hooks install|uninstall` mutate only the `hk` hook
   manager (`hk.pkl`); creating a `hk.pkl` from scratch (run `hk init` first)
   and mutating the other hook managers are out of scope for this slice.
+- `packs fetch` supports a single local-directory artifact format. Remote
+  (HTTP) acquisition and tarball/archive formats are intentionally out of
+  scope for this slice; the transport boundary is injectable so a network
+  adapter can be added later without changing the executor.
 - The CLI requires Node's native type stripping (Node 23.6+, or 22.6+ with
   `--experimental-strip-types`).
 
