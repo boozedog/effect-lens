@@ -58,6 +58,7 @@ Options:
   -j, --json            Emit machine-readable JSON output
       --path <path>     File or directory to lint (check only; relative to --project)
       --mode <mode>     Check gate mode: lens-only (default) or unified (check only)
+      --changed         Lint only staged changed files (check only; scoped by --workspace)
       --dry-run         Build a read-only setup plan (setup only)
       --apply           Apply the actionable setup plan (setup only; mutates)
   -h, --help            Show this help
@@ -87,6 +88,7 @@ const main = (): void => {
     json?: boolean
     path?: string
     mode?: string
+    changed?: boolean
     "dry-run"?: boolean
     apply?: boolean
     catalog?: string
@@ -113,6 +115,7 @@ const main = (): void => {
         json: { type: "boolean", short: "j" },
         path: { type: "string" },
         mode: { type: "string" },
+        changed: { type: "boolean" },
         "dry-run": { type: "boolean" },
         apply: { type: "boolean" },
         catalog: { type: "string" },
@@ -169,6 +172,13 @@ const main = (): void => {
       result = drift(context)
       break
     case "check":
+      if (values.changed === true && values.path !== undefined) {
+        process.stderr.write(
+          `error: --changed and --path are mutually exclusive\n\n${USAGE}`
+        )
+        process.exitCode = Exit.Error
+        return
+      }
       if (values.mode !== undefined && values.mode !== "lens-only" && values.mode !== "unified") {
         process.stderr.write(
           `error: invalid --mode: ${values.mode} (expected lens-only or unified)\n\n${USAGE}`
@@ -177,9 +187,14 @@ const main = (): void => {
         return
       }
       const mode: CheckMode = values.mode === "unified" ? "unified" : DEFAULT_CHECK_MODE
-      result = values.path === undefined
-        ? check({ projectDir, cacheDir, mode })
-        : check({ projectDir, cacheDir, path: values.path, mode })
+      result = check({
+        projectDir,
+        cacheDir,
+        mode,
+        workspace: context.workspace,
+        changed: values.changed === true,
+        ...(values.path === undefined ? {} : { path: values.path })
+      })
       break
     case "setup":
       if (values["dry-run"] === true && values.apply === true) {

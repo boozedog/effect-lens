@@ -2,15 +2,27 @@
  * `effect-lens check`: run the available local read-only review path and
  * aggregate findings and diagnostics into a {@link MachineOutput}.
  *
- * Check runs oxlint (with the Lens plugin loaded) over the target path, feeds
- * the JSON diagnostics into the shared-core `review` operation, and aggregates
- * the resulting findings and diagnostics. In `lens-only` mode (the default) a
- * fresh scratch config is used; in `unified` mode the target repository's
- * oxlint config is preserved while the Lens rules are loaded. It is read-only:
- * it never mutates source, caches, or the project's own configuration (in
- * `unified` mode it writes a transient sidecar config that is removed in a
- * `finally` block). If oxlint is unavailable, a diagnostic is emitted instead
- * of crashing.
+ * Check runs oxlint (with the Lens plugin loaded) over the resolved scope,
+ * feeds the JSON diagnostics into the shared-core `review` operation, and
+ * aggregates the resulting findings and diagnostics. In `lens-only` mode (the
+ * default) a fresh scratch config is used; in `unified` mode the target
+ * repository's oxlint config is preserved while the Lens rules are loaded. It
+ * is read-only: it never mutates source, caches, or the project's own
+ * configuration (in `unified` mode it writes a transient sidecar config that
+ * is removed in a `finally` block). If oxlint is unavailable, a diagnostic is
+ * emitted instead of crashing.
+ *
+ * The lint scope is one of:
+ * - `project` (default) — the whole repository root.
+ * - `path` — an explicit `--path` file or directory relative to the project.
+ * - `changed` (`--changed`) — the staged changed-file scope, optionally
+ *   filtered to a selected `--workspace`. Changed files are read from Git
+ *   (`git diff --cached --name-only --diff-filter=ACMR`) by the reusable
+ *   {@link resolveChangedFiles} resolver, so deleted and unstaged-only files
+ *   are excluded and the repository-root config/lockfile boundary is
+ *   preserved while linting only the selected workspace's staged files.
+ *   A scope with no matching staged files is a clean no-op with an explicit
+ *   report.
  *
  * @since 0.0.0
  */
@@ -21,9 +33,30 @@ import type { Diagnostic } from "../../Finding.ts"
 import * as Review from "../../operations/review.ts"
 import { makeDiagnostic } from "../../operations/shared.ts"
 import { type CheckMode, DEFAULT_CHECK_MODE } from "../../provider/Provider.ts"
+import { resolveChangedFiles } from "../changed.ts"
 import { encode } from "../encode.ts"
 import { runOxlint } from "../oxlint.ts"
 import type { CliResult } from "../types.ts"
+
+/**
+ * The resolved lint scope for a `check` run.
+ *
+ * - `project` — the whole repository root (the default).
+ * - `path` — an explicit `--path` file or directory relative to the project.
+ * - `changed` — the staged changed-file scope (`--changed`), optionally
+ *   filtered to a selected workspace.
+ *
+ * @since 0.0.0
+ */
+export type CheckScope =
+  | { readonly kind: "project"; readonly workspace: string | null }
+  | { readonly kind: "path"; readonly path: string; readonly workspace: string | null }
+  | {
+    readonly kind: "changed"
+    readonly workspace: string | null
+    readonly files: Array<string>
+    readonly error: string | null
+  }
 
 /**
  * Runs the read-only `check` command.
@@ -35,13 +68,40 @@ export const check = (args: {
   cacheDir: string
   path?: string
   mode?: CheckMode
+  workspace?: string | undefined
+  changed?: boolean
 }): CliResult => {
   const mode = args.mode ?? DEFAULT_CHECK_MODE
-  const target = args.path === undefined
-    ? args.projectDir
-    : resolve(args.projectDir, args.path)
-  const oxlint = runOxlint({ projectDir: args.projectDir, target, mode })
+  const scope = buildScope(args)
   const diagnostics: Array<Diagnostic> = []
+  let oxlint: ReturnType<typeof runOxlint>
+  if (scope.kind === "changed" && scope.files.length === 0) {
+    // No staged files match the selected scope (or the scope could not be
+    // read): a clean no-op with an explicit report, so oxlint is not spawned.
+    oxlint = {
+      diagnostics: [],
+      files: 0,
+      error: null,
+      mode,
+      configSource: "none",
+      configWarning: null
+    }
+  } else {
+    oxlint = runOxlint({
+      projectDir: args.projectDir,
+      targets: targetsOf(args.projectDir, scope),
+      mode
+    })
+  }
+  if (scope.kind === "changed" && scope.error !== null) {
+    diagnostics.push(
+      makeDiagnostic({
+        id: "check-changed-scope-unavailable",
+        severity: "warning",
+        message: scope.error
+      })
+    )
+  }
   if (oxlint.error !== null) {
     diagnostics.push(
       makeDiagnostic({
@@ -75,15 +135,87 @@ export const check = (args: {
     json: {
       machineOutput: encode(MachineOutput, machineOutput),
       review: encode(Review.ReviewResult, review),
+      scope: scopeJson(scope),
       oxlint: {
         files: oxlint.files,
         error: oxlint.error,
         mode,
+        changed: scope.kind === "changed",
         config: oxlint.configSource,
         configWarning: oxlint.configWarning
       }
     },
-    human: buildHuman({ review, oxlint, diagnostics: allDiagnostics, mode })
+    human: buildHuman({ review, oxlint, diagnostics: allDiagnostics, mode, scope })
+  }
+}
+
+/**
+ * Resolves the lint scope from the `check` args: `--changed` selects the
+ * staged changed-file scope, `--path` an explicit file/directory, otherwise
+ * the whole project tree.
+ *
+ * @since 0.0.0
+ */
+const buildScope = (args: {
+  projectDir: string
+  path?: string
+  workspace?: string | undefined
+  changed?: boolean
+}): CheckScope => {
+  const workspace = args.workspace ?? null
+  if (args.changed === true) {
+    const resolved = resolveChangedFiles({
+      projectDir: args.projectDir,
+      workspace: args.workspace
+    })
+    return {
+      kind: "changed",
+      workspace,
+      files: resolved.files,
+      error: resolved.error
+    }
+  }
+  if (args.path !== undefined) {
+    return { kind: "path", path: args.path, workspace }
+  }
+  return { kind: "project", workspace }
+}
+
+/**
+ * The lint targets for a scope: the changed files for `changed`, the resolved
+ * `--path`, or the project directory.
+ *
+ * @since 0.0.0
+ */
+const targetsOf = (projectDir: string, scope: CheckScope): Array<string> => {
+  switch (scope.kind) {
+    case "changed":
+      return scope.files
+    case "path":
+      return [resolve(projectDir, scope.path)]
+    case "project":
+      return [projectDir]
+  }
+}
+
+/**
+ * The JSON-serializable scope descriptor for `--json` output.
+ *
+ * @since 0.0.0
+ */
+const scopeJson = (scope: CheckScope): unknown => {
+  switch (scope.kind) {
+    case "changed":
+      return {
+        kind: "changed",
+        workspace: scope.workspace,
+        files: scope.files,
+        error: scope.error
+      }
+    case "path":
+      return { kind: "path", path: scope.path, workspace: scope.workspace }
+    case "project":
+      return { kind: "project", workspace: scope.workspace }
   }
 }
 
@@ -97,18 +229,42 @@ const buildHuman = (args: {
   oxlint: { files: number; error: string | null; configSource: string }
   diagnostics: Array<Diagnostic>
   mode: CheckMode
+  scope: CheckScope
 }): Array<string> => {
-  const { review, oxlint, diagnostics, mode } = args
-  const lines: Array<string> = [`effect-lens check (${mode})`]
-  if (oxlint.error !== null) {
-    lines.push(`oxlint: ${oxlint.error}`)
-  } else {
-    lines.push(`linted ${oxlint.files} file(s) (config: ${oxlint.configSource})`)
+  const { review, oxlint, diagnostics, mode, scope } = args
+  const changed = scope.kind === "changed"
+  const lines: Array<string> = [`effect-lens check (${mode}${changed ? ", changed" : ""})`]
+  if (changed) {
+    if (scope.error !== null) {
+      lines.push(`scope: changed files unavailable (${scope.error})`)
+    } else if (scope.files.length === 0) {
+      lines.push("scope: no staged files to lint")
+    } else {
+      lines.push(`scope: ${scope.files.length} changed file(s) to lint`)
+    }
+    if (scope.workspace !== null) lines.push(`workspace: ${scope.workspace}`)
+  } else if (scope.kind === "path") {
+    lines.push(`path: ${scope.path}`)
+  }
+  // A changed scope with no matching files never spawns oxlint, so there is
+  // no lint run to report.
+  if (!(changed && scope.files.length === 0)) {
+    if (oxlint.error !== null) {
+      lines.push(`oxlint: ${oxlint.error}`)
+    } else {
+      lines.push(`linted ${oxlint.files} file(s) (config: ${oxlint.configSource})`)
+    }
   }
   lines.push(
     `findings: ${review.summary.total} (${review.summary.errors} error(s), ` +
       `${review.summary.warnings} warning(s))`
   )
+  if (changed && scope.files.length > 0) {
+    lines.push("changed files:")
+    for (const file of scope.files) {
+      lines.push(`  - ${file}`)
+    }
+  }
   for (const finding of review.findings) {
     lines.push(
       `  - [${finding.severity}] ${finding.rule} (${

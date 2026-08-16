@@ -304,15 +304,16 @@ const decodeDiagnostic = (raw: unknown): Review.OxlintDiagnostic | null => {
 }
 
 /**
- * Runs oxlint read-only over `target` (a file or directory) with the Lens
- * plugin loaded. Returns the parsed diagnostics plus a count of linted files,
- * or an error string when oxlint is unavailable or its output is unparseable.
+ * Runs oxlint read-only over `targets` (files and/or directories) with the
+ * Lens plugin loaded. Returns the parsed diagnostics plus a count of linted
+ * files, or an error string when oxlint is unavailable or its output is
+ * unparseable.
  *
  * @since 0.0.0
  */
 export const runOxlint = (args: {
   projectDir: string
-  target: string
+  targets: ReadonlyArray<string>
   mode?: CheckMode
 }): OxlintRun => {
   const mode = args.mode ?? DEFAULT_CHECK_MODE
@@ -344,7 +345,7 @@ export const runOxlint = (args: {
   try {
     const result = spawnSync(
       oxlintBin,
-      ["-c", configPath, "--format", "json", ...buildIgnorePatterns(), args.target],
+      ["-c", configPath, "--format", "json", ...buildIgnorePatterns(), ...args.targets],
       { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }
     )
     if (result.error !== undefined) {

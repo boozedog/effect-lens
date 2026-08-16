@@ -52,7 +52,7 @@ export const adoptionAudit = (context: CliContext): CliResult => {
     )
   const oxlint = runOxlint({
     projectDir: context.projectDir,
-    target,
+    targets: [target],
     mode: "unified"
   })
   const audit = Adoption.buildAdoptionAudit({

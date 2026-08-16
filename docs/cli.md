@@ -50,6 +50,7 @@ without type stripping (see `docs/packaging.md`).
 | `--exclude <ver>`     | Exclude a version from recommendation (freshness only; repeatable).                                |
 | `-j, --json`          | Emit machine-readable JSON instead of human-readable text.                                         |
 | `--mode <mode>`       | Check gate mode: `lens-only` (default) or `unified` (check only).                                  |
+| `--changed`           | Lint only staged changed files (check only; scoped by `--workspace`).                              |
 | `-h, --help`          | Print usage.                                                                                       |
 | `-v, --version`       | Print the version.                                                                                 |
 
@@ -67,8 +68,9 @@ effect-lens doctor --project . --workspace packages/foldkit --cache ~/.cache/eff
 `--project` is always the repository root (the lockfile and configuration
 boundary). `--workspace` selects a package relative to that root and is used by
 the resolution-based commands (`doctor`, `drift`, `setup --dry-run`,
-`packs plan`, `packs status`, `adoption audit`, and `freshness`); `check` and `hooks` are unaffected because
-they do not resolve the Effect dependency.
+`packs plan`, `packs status`, `adoption audit`, and `freshness`); `check
+--changed` uses it to scope the staged changed files, and `hooks` is unaffected
+because it does not resolve the Effect dependency.
 
 Resolution precedence for the _expected_ Effect identity:
 
@@ -185,6 +187,48 @@ built-in config as `lens-only`. When the project config cannot be parsed, a
 `check-config-unparseable` warning diagnostic is emitted and the built-in
 config is used rather than crashing. An invalid `--mode` value (anything other
 than `lens-only` or `unified`) is rejected with exit `2`.
+
+#### Changed-file scope
+
+`check --changed` lints only the staged changed files instead of a whole
+directory, so a pre-commit-style gate checks exactly what is about to be
+committed. It is the reusable changed-file counterpart of the adoption audit's
+workspace target resolution: the repository root (`--project`) remains the
+config/lockfile boundary while only the selected workspace's staged files are
+linted.
+
+```sh
+effect-lens check --project . --workspace packages/foldkit --mode unified --changed
+effect-lens check --project . --changed --json
+```
+
+- **Staged paths** are read from Git with
+  `git diff --cached --name-only --diff-filter=ACMR`, so deleted (`D`) and
+  unstaged-only files are excluded and only added/copied/modified/renamed
+  paths are candidates.
+- **Workspace filtering** (with `--workspace`) keeps only staged paths inside
+  the selected workspace's tree; full and basename targets resolve exactly as
+  they do for `adoption audit` (a basename target matches the pnpm-lock
+  importer). Root and other-workspace files never affect the selected
+  workspace's result.
+- **Configured ignores and overrides stay effective.** oxlint applies the
+  project's `ignorePatterns` and `overrides` even when given explicit file
+  paths, and unsupported paths (e.g. `.json`) are skipped, so the changed-file
+  scope honours the same project policy as a full-tree scan.
+- **Empty scope** — when no staged files match the selected scope, `check
+  --changed` is a clean no-op (exit `0`) with an explicit
+  `scope: no staged files to lint` report. If the staged paths cannot be read
+  (git unavailable or not a repository), a `check-changed-scope-unavailable`
+  warning diagnostic is emitted.
+- **Mutual exclusion** — `--changed` and `--path` are mutually exclusive;
+  combining them is rejected with exit `2`.
+
+Both human and JSON output identify the changed mode and the selected scope:
+the human report shows `effect-lens check (<mode>, changed)`, the resolved
+scope, and the changed files, and the JSON payload carries a top-level `scope`
+object (`{ kind: "changed", workspace, files }`) plus
+`oxlint.changed: true`. `--changed` is read-only and offline: it only runs
+`git diff` and oxlint, and never mutates the index, working tree, or any file.
 
 #### Read-only guarantee
 

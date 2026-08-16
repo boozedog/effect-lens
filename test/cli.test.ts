@@ -172,6 +172,23 @@ describe("CLI check", () => {
     expect(json.oxlint.mode).toBe("unified")
     expect(json.oxlint.config).toBe("project")
   })
+
+  it("exits 2 when --changed and --path are combined", () => {
+    const { stderr, status } = runCli([
+      "check",
+      "--project",
+      project("check-unified"),
+      "--cache",
+      cacheDir,
+      "--mode",
+      "unified",
+      "--changed",
+      "--path",
+      "src/a.ts"
+    ])
+    expect(status).toBe(2)
+    expect(stderr).toContain("mutually exclusive")
+  })
 })
 
 describe("CLI setup", () => {
