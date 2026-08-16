@@ -1942,3 +1942,41 @@ hierarchy, unique-id, path collision, path traversal, directory recursion,
 unclosed-fence, attribution, ref-override, missing-manifest, and missing-file
 ingestion against the committed cache fixtures and the `test/fixtures/ingest/`
 packs.
+
+## Packed-artifact consumer E2E (issue #17)
+
+`nub run pack:check` (`scripts/package-check.mjs`) proves the packed
+`effect-lens` artifact is self-contained and runnable from a clean
+workspace-style consumer outside the repository, without a source checkout and
+without a globally installed Nub at runtime. It never publishes to a registry.
+The workspace consumer exercises the real integration paths against the packed
+CLI:
+
+- **Root lockfile + workspace importer resolution** — `doctor` resolves the
+  root importer (`4.0.0-rc.109`) and a selected `--workspace packages/app`
+  importer (which pins a distinct `4.0.0-beta.83`) from the consumer's root
+  `pnpm-lock.yaml`, so the workspace assertion can only pass if the selected
+  importer was actually consulted rather than falling back to the root.
+- **Invalid / ambiguous workspace targets** — a full `check` with an
+  unresolved or ambiguous target is rejected with exit `2` and an actionable
+  diagnostic (never a silent root scan or a fabricated clean result).
+- **Consumer config/plugin path** — a full `check --mode unified
+  --workspace packages/app` loads the consumer's own `.oxlintrc.json` and a
+  deterministic plugin fixture, reports the Lens finding with `(lens)` provider
+  provenance (and `"provider": "lens"` in the `--json` payload), and excludes
+  an outside-workspace root violation.
+- **Staged changed-file scope** — `check --mode unified --workspace
+  packages/app --changed` lints only the selected workspace's staged files and
+  honors the consumer config ignores.
+- **Actionable config/plugin failure** — a broken plugin surfaces
+  `exit 1` / `Failed to load JS plugin` metadata and a
+  `check-oxlint-unavailable` diagnostic, never a clean empty gate.
+- **Hook install** — `hooks install --workspace packages/app` discovers the
+  local packed binary and generates an hk command that includes the unified
+  changed scope and the selected workspace; the script then extracts the
+  written `["effect-lens"]` step's `check` command and spawns it from the
+  consumer cwd, asserting it runs the unified changed-scope check.
+
+All temporary consumer directories and the tarball are removed in a `finally`
+block on both success and failure, and the script verifies they are gone before
+exiting.

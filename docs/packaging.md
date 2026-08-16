@@ -137,7 +137,36 @@ publishing:
    reported, oxlint starts without `ENOBUFS`, and only fixture sources are
    linted) to prove the packed artifact is self-contained and runnable without
    a source checkout and without a globally installed Nub at runtime.
-5. Removes all temporary artifacts.
+5. Creates a **workspace-style consumer** (issue #17) outside the repository,
+   installs the tarball with `nub install`, and exercises the real integration
+   paths against the packed CLI:
+   - **Root lockfile + workspace importer resolution** — `doctor` resolves the
+     root importer (`4.0.0-rc.109`) and a selected `--workspace packages/app`
+     importer (which pins a distinct `4.0.0-beta.83`) from the consumer's root
+     `pnpm-lock.yaml`, so the workspace assertion can only pass if the selected
+     importer was actually consulted rather than falling back to the root.
+   - **Invalid / ambiguous workspace targets** — a full `check` with an
+     unresolved (`nonexistent`) or ambiguous (`app`, matching both
+     `packages/app` and `apps/app`) target is rejected with exit `2` and an
+     actionable diagnostic.
+   - **Consumer config/plugin path** — a full `check --mode unified
+     --workspace packages/app` loads the consumer's own `.oxlintrc.json` and a
+     deterministic plugin fixture (`fixture/no-console`), reports the Lens
+     finding with `(lens)` provider provenance (and `"provider": "lens"` in the
+     `--json` payload), and excludes an outside-workspace root violation.
+   - **Staged changed-file scope** — `check --mode unified --workspace
+     packages/app --changed` lints only the selected workspace's staged files
+     (the root staged file is excluded) and honors the consumer config ignores.
+   - **Actionable config/plugin failure** — a broken plugin surfaces
+     `exit 1` / `Failed to load JS plugin` metadata and a
+     `check-oxlint-unavailable` diagnostic, never a clean empty gate.
+   - **Hook install** — `hooks install --workspace packages/app` discovers the
+     local packed binary and generates an hk command that includes the unified
+     changed scope and the selected workspace; the script then extracts the
+     written `["effect-lens"]` step's `check` command and spawns it from the
+     consumer cwd, asserting it runs the unified changed-scope check.
+6. Removes all temporary artifacts in a `finally` block (on both success and
+   failure) and verifies they are gone.
 
 ## Consumer installation
 
