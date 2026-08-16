@@ -171,6 +171,80 @@ const commandAvailable = (command: string): boolean => {
 }
 
 /**
+ * The project-relative path of the locally pinned `effect-lens` binary that
+ * hook resolution prefers before falling back to PATH.
+ *
+ * @since 0.0.0
+ */
+const LOCAL_BIN_REL = join("node_modules", ".bin", "effect-lens")
+
+/**
+ * A resolved, reproducible command for the generated hk step, or a refusal.
+ *
+ * `command` is the value embedded (shell-quoted) in the generated `check`
+ * string. `source` records how the command was resolved so diagnostics and
+ * tests can distinguish an explicit override from a local binary or a PATH
+ * fallback.
+ *
+ * @since 0.0.0
+ */
+type CommandResolution =
+  | { kind: "ok"; command: string; source: "override" | "local" | "path" }
+  | { kind: "unavailable"; detail: string; id: string }
+
+/**
+ * Resolves the `effect-lens` command for the generated hk step with a
+ * reproducible local-binary-first policy.
+ *
+ * Priority:
+ *
+ * 1. **Explicit override** — the `command` seam (`EFFECT_LENS_COMMAND`). It is
+ *    authoritative for unusual installs; the exact value is embedded verbatim
+ *    (shell-quoted), preserving arguments/path values safely. A configured
+ *    override that does not resolve is refused.
+ * 2. **Project-local binary** — `<projectDir>/node_modules/.bin/effect-lens`
+ *    when it exists and is executable/resolvable. Its absolute path is embedded
+ *    so the generated hook does not depend on the consumer's PATH at hook time.
+ * 3. **PATH fallback** — the bare `effect-lens` command on PATH, an explicitly
+ *    accepted policy for a globally-installed CLI. When none of the above
+ *    resolves, the install refuses (never a partial write) with an actionable
+ *    diagnostic that does not recommend a global install.
+ *
+ * @since 0.0.0
+ */
+const resolveHookCommand = (
+  projectDir: string,
+  override: string | undefined
+): CommandResolution => {
+  if (override !== undefined && override !== "") {
+    if (commandAvailable(override)) {
+      return { kind: "ok", command: override, source: "override" }
+    }
+    return {
+      kind: "unavailable",
+      detail: `cannot install hooks: the configured command "${override}" is not ` +
+        "available; check the EFFECT_LENS_COMMAND override, or install a " +
+        "project-local effect-lens binary",
+      id: "hooks-install-hk-command-unavailable"
+    }
+  }
+  const localBin = join(projectDir, LOCAL_BIN_REL)
+  if (existsSync(localBin) && commandAvailable(localBin)) {
+    return { kind: "ok", command: localBin, source: "local" }
+  }
+  if (commandAvailable("effect-lens")) {
+    return { kind: "ok", command: "effect-lens", source: "path" }
+  }
+  return {
+    kind: "unavailable",
+    detail: "cannot install hooks: no effect-lens command is available; install " +
+      "effect-lens as a local devDependency so node_modules/.bin/effect-lens " +
+      "exists, or set EFFECT_LENS_COMMAND to an explicit command",
+    id: "hooks-install-hk-command-unavailable"
+  }
+}
+
+/**
  * Reads a file's text, or `null` when the path is absent or unreadable.
  *
  * @since 0.0.0
@@ -570,7 +644,6 @@ export const applyHookMutation = (args: {
   command?: string | undefined
 }): HookMutationResult => {
   const { projectDir, operation } = args
-  const command = args.command ?? "effect-lens"
   const status = hooksStatus(projectDir)
   const hk = status.managers.find((m) => m.manager === "hk") ?? null
   const relName = findHkConfig(projectDir)
@@ -623,15 +696,11 @@ export const applyHookMutation = (args: {
     if ("refused" in workspaceArg) {
       return refused(operation, workspaceArg.refused, workspaceArg.id)
     }
-    if (!commandAvailable(command)) {
-      return refused(
-        operation,
-        `cannot install hooks: the "${command}" command is not available on PATH; ` +
-          "install effect-lens (e.g. `npm install -g effect-lens`) before installing hooks",
-        "hooks-install-hk-command-unavailable"
-      )
+    const resolved = resolveHookCommand(projectDir, args.command)
+    if (resolved.kind === "unavailable") {
+      return refused(operation, resolved.detail, resolved.id)
     }
-    return installHk(projectDir, relName, buildLensCommand(command, workspaceArg.value))
+    return installHk(projectDir, relName, buildLensCommand(resolved.command, workspaceArg.value))
   }
 
   // uninstall

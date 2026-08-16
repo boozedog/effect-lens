@@ -26,10 +26,11 @@ import { fileURLToPath } from "node:url"
 const ENTRY = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url))
 
 /**
- * A fake `effect-lens` executable placed on PATH so the CLI's command-
- * availability precondition passes without depending on the real binary or a
- * built `dist/`. The generated hk step embeds the literal `effect-lens` name
- * (the default command), so CLI tests assert the realistic command text.
+ * A fake `effect-lens` executable placed on PATH so the CLI's command
+ * resolution falls back to PATH (no local binary, no `EFFECT_LENS_COMMAND`)
+ * without depending on the real binary or a built `dist/`. The generated hk
+ * step embeds the literal `effect-lens` name, so these CLI tests assert the
+ * realistic PATH-fallback command text.
  *
  * @since 0.0.0
  */
@@ -213,6 +214,30 @@ describe("hooks install|uninstall (CLI, hk)", () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it("embeds a project-local node_modules/.bin/effect-lens path without PATH reliance", () => {
+    const dir = hkProject()
+    const localBin = join(dir, "node_modules", ".bin", "effect-lens")
+    mkdirSync(join(dir, "node_modules", ".bin"), { recursive: true })
+    writeFileSync(localBin, "#!/bin/sh\nexit 0\n")
+    chmodSync(localBin, 0o755)
+    const emptyPath = mkdtempSync(join(tmpdir(), "effect-lens-cli-nopath-"))
+    const env: NodeJS.ProcessEnv = { ...process.env, PATH: emptyPath }
+    delete env.EFFECT_LENS_COMMAND
+    try {
+      const { stdout, status } = runCli(["hooks", "install", "--project", dir, "--json"], env)
+      expect(status).toBe(0)
+      const json = JSON.parse(stdout) as { mutation: { outcome: string } }
+      expect(json.mutation.outcome).toBe("applied")
+      // The absolute local binary path is embedded, not a bare PATH command.
+      expect(readFileSync(join(dir, "hk.pkl"), "utf8")).toContain(
+        `check = "'${localBin}' check --mode unified --changed"`
+      )
+    } finally {
+      rmSync(emptyPath, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe("setup --apply (CLI, hk)", () => {
@@ -250,6 +275,35 @@ describe("setup --apply (CLI, hk)", () => {
       expect(stdout).toContain("effect-lens setup --apply")
       expect(stdout).toContain("[applied] hooks")
     } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("setup --apply honors an explicit EFFECT_LENS_COMMAND override over a local bin", () => {
+    const dir = hkProject()
+    // A project-local binary is present; without the override it would win.
+    const localBin = join(dir, "node_modules", ".bin", "effect-lens")
+    mkdirSync(join(dir, "node_modules", ".bin"), { recursive: true })
+    writeFileSync(localBin, "#!/bin/sh\nexit 0\n")
+    chmodSync(localBin, 0o755)
+    const overrideDir = mkdtempSync(join(tmpdir(), "effect-lens-cli-override-"))
+    const override = join(overrideDir, "custom-lens")
+    writeFileSync(override, "#!/bin/sh\nexit 0\n")
+    chmodSync(override, 0o755)
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      EFFECT_LENS_COMMAND: override,
+      PATH: overrideDir
+    }
+    try {
+      const { status } = runCli(["setup", "--apply", "--project", dir, "--json"], env)
+      expect(status).toBe(1)
+      const content = readFileSync(join(dir, "hk.pkl"), "utf8")
+      // The explicit override wins over the project-local binary.
+      expect(content).toContain(`check = "'${override}' check --mode unified --changed"`)
+      expect(content).not.toContain(join(dir, "node_modules"))
+    } finally {
+      rmSync(overrideDir, { recursive: true, force: true })
       rmSync(dir, { recursive: true, force: true })
     }
   })

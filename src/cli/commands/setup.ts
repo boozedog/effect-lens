@@ -88,7 +88,8 @@ export const setupApply = (context: CliContext): CliResult => {
   const result = SetupApply.applySetupPlan({
     projectDir: context.projectDir,
     cacheDir: context.cacheDir,
-    workspace: context.workspace
+    workspace: context.workspace,
+    command: context.command
   })
   const machineOutput = makeMachineOutput({
     status: aggregateStatus({ findings: [], diagnostics: result.diagnostics }),

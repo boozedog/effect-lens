@@ -161,7 +161,10 @@ const main = (): void => {
     projectDir,
     cacheDir,
     workspace: values.workspace,
-    command: process.env.EFFECT_LENS_COMMAND ?? "effect-lens"
+    // Only a set EFFECT_LENS_COMMAND is an explicit override. When unset, the
+    // hook install resolution runs its local-binary-first policy instead of
+    // being pinned to a literal "effect-lens" name on PATH.
+    command: process.env.EFFECT_LENS_COMMAND
   }
 
   let result: CliResult

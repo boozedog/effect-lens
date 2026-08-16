@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from "@effect/vitest"
 import * as Option from "effect/Option"
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { applyHookMutation } from "../src/operations/hookMutation.ts"
@@ -37,11 +37,40 @@ const fakeCommand = (): string => {
   if (fakeCommandPath === null) {
     const dir = mkdtempSync(join(tmpdir(), "effect-lens-cmd-"))
     const bin = join(dir, "effect-lens")
-    writeFileSync(bin, "#!/bin/sh\nexit 0\n")
-    chmodSync(bin, 0o755)
+    writeFakeBin(bin)
     fakeCommandPath = bin
   }
   return fakeCommandPath
+}
+
+/**
+ * Writes an executable fake `effect-lens` shell script (exits 0) at `path`,
+ * creating parent directories as needed. Used to satisfy the command-availability
+ * and resolution preconditions without depending on the real binary.
+ *
+ * @since 0.0.0
+ */
+const writeFakeBin = (path: string): void => {
+  mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true })
+  writeFileSync(path, "#!/bin/sh\nexit 0\n")
+  chmodSync(path, 0o755)
+}
+
+/**
+ * Sets `process.env.PATH` to `value` for the duration of `fn`, restoring the
+ * original value afterwards. Used to make PATH fallback and PATH-absence
+ * resolution deterministic in tests.
+ *
+ * @since 0.0.0
+ */
+const withPath = (value: string, fn: () => void): void => {
+  const original = process.env.PATH
+  process.env.PATH = value
+  try {
+    fn()
+  } finally {
+    process.env.PATH = original
+  }
 }
 
 /**
@@ -559,6 +588,132 @@ describe("hooks install workspace validation", () => {
       expect(result.outcome).toBe("applied")
       expect(read(dir)).toContain("--workspace 'packages/foldkit'")
     } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("hooks install command resolution", () => {
+  /**
+   * A temp project with a real `hk.pkl` and a project-local
+   * `node_modules/.bin/effect-lens` executable, simulating a consumer that
+   * installs effect-lens as a local devDependency (no global install).
+   *
+   * @since 0.0.0
+   */
+  const localBinProject = (): string => {
+    const dir = inlineProject()
+    writeFakeBin(join(dir, "node_modules", ".bin", "effect-lens"))
+    return dir
+  }
+
+  it("prefers a project-local node_modules/.bin/effect-lens without an override or PATH", () => {
+    const dir = localBinProject()
+    try {
+      const result = applyHookMutation({ projectDir: dir, operation: "install" })
+      expect(result.outcome).toBe("applied")
+      expect(result.changed).toBe(true)
+      const localBin = join(dir, "node_modules", ".bin", "effect-lens")
+      const content = read(dir)
+      // The absolute local binary path is embedded, not a bare PATH command.
+      expect(content).toContain(`check = "'${localBin}' check --mode unified --changed"`)
+      expect(content).not.toContain("check = \"'effect-lens'")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("includes workspace scope when requested with a local binary", () => {
+    const dir = localBinProject()
+    try {
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        workspace: "packages/foldkit"
+      })
+      expect(result.outcome).toBe("applied")
+      const localBin = join(dir, "node_modules", ".bin", "effect-lens")
+      expect(read(dir)).toContain(
+        `check = "'${localBin}' check --mode unified --changed --workspace 'packages/foldkit'"`
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("shell-quotes a project-local binary path containing a space", () => {
+    const dir = localBinProject()
+    const spacedDir = join(dir, "my project")
+    mkdirSync(spacedDir, { recursive: true })
+    writeFileSync(join(spacedDir, "hk.pkl"), read(dir))
+    writeFakeBin(join(spacedDir, "node_modules", ".bin", "effect-lens"))
+    try {
+      const result = applyHookMutation({ projectDir: spacedDir, operation: "install" })
+      expect(result.outcome).toBe("applied")
+      const localBin = join(spacedDir, "node_modules", ".bin", "effect-lens")
+      // The spaced absolute path is embedded as a single shell-quoted token.
+      expect(read(spacedDir)).toContain(`check = "'${localBin}' check --mode unified --changed"`)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("uses an explicit override even when a local binary exists", () => {
+    const dir = localBinProject()
+    const override = fakeCommand()
+    try {
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: override
+      })
+      expect(result.outcome).toBe("applied")
+      const content = read(dir)
+      expect(content).toContain(`check = "'${override}' check`)
+      // The override wins; the local binary path is not embedded.
+      expect(content).not.toContain(join(dir, "node_modules"))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("falls back to the effect-lens command on PATH when no local binary exists", () => {
+    const dir = inlineProject()
+    const pathDir = mkdtempSync(join(tmpdir(), "effect-lens-path-"))
+    writeFakeBin(join(pathDir, "effect-lens"))
+    try {
+      withPath(pathDir, () => {
+        const result = applyHookMutation({ projectDir: dir, operation: "install" })
+        expect(result.outcome).toBe("applied")
+        expect(read(dir)).toContain(`check = "'effect-lens' check --mode unified --changed"`)
+      })
+    } finally {
+      rmSync(pathDir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("refuses with an actionable local-install diagnostic when no command resolves", () => {
+    const dir = inlineProject()
+    const emptyPath = mkdtempSync(join(tmpdir(), "effect-lens-nopath-"))
+    try {
+      const before = read(dir)
+      withPath(emptyPath, () => {
+        const result = applyHookMutation({ projectDir: dir, operation: "install" })
+        expect(result.outcome).toBe("refused")
+        expect(result.changed).toBe(false)
+        const d = result.diagnostics.find(
+          (x) => x.id === "hooks-install-hk-command-unavailable"
+        )
+        expect(d).toBeDefined()
+        // The diagnostic is actionable and does not recommend a global install.
+        expect(d?.message).toContain("devDependency")
+        expect(d?.message).not.toContain("npm install -g")
+        // No partial write: the config is unchanged.
+        expect(read(dir)).toBe(before)
+      })
+    } finally {
+      rmSync(emptyPath, { recursive: true, force: true })
       rmSync(dir, { recursive: true, force: true })
     }
   })

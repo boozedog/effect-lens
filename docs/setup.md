@@ -150,8 +150,8 @@ or `--apply`. `--apply` and `--dry-run` are mutually exclusive.
 - **precondition** — refuses before any mutation when the plan contains an
   `unsupported` step (e.g. an unsupported package manager or an ambiguous hook
   manager), when the hooks step needs action but no supported hook target
-  resolves, or when the `effect-lens` command is unavailable on `PATH`. A
-  refused apply writes nothing.
+  resolves, or when no `effect-lens` command resolves (no project-local binary,
+  PATH command, or valid override). A refused apply writes nothing.
 - **applies** only the actionable, unambiguous **hooks** step (install the
   `effect-lens` check into the single supported manager).
 - **reports** every step as `applied`, `ok`, `deferred`, `refused`, or
@@ -231,15 +231,30 @@ no-op, even if the generated command differs (for example the old unscoped
 `effect-lens check` or a different `--workspace`). To refresh the installed
 command, run `hooks uninstall` first and then `hooks install` again.
 
-### Command availability requirement
+### Reproducible command resolution
 
-Before `hooks install` or `setup --apply` writes `hk.pkl`, Lens verifies that
-the `effect-lens` command is available on `PATH` (by running
-`effect-lens --version`). If it is unavailable, the install refuses with an
-actionable diagnostic (e.g. `npm install -g effect-lens`) and writes nothing,
-so a generated hook can never reference a command that cannot run. The command
-name defaults to `effect-lens` and can be overridden with the
-`EFFECT_LENS_COMMAND` environment variable.
+Before `hooks install` or `setup --apply` writes `hk.pkl`, Lens resolves the
+`effect-lens` command with a **local-binary-first policy** so a generated hook
+is reproducible for a consumer that pins the CLI as a local dependency:
+
+1. **Explicit override** — the `EFFECT_LENS_COMMAND` environment variable. It is
+   authoritative for unusual installs; the exact value is embedded verbatim
+   (shell-quoted), so arguments/path values are preserved safely.
+2. **Project-local binary** — `<projectDir>/node_modules/.bin/effect-lens` when
+   it exists and is executable/resolvable. Its absolute path is embedded, so the
+   generated hook does not depend on the consumer's `PATH` at hook time. This is
+   how a consumer that installs `effect-lens` as a local devDependency gets a
+   reproducible hook.
+3. **PATH fallback** — the bare `effect-lens` command on `PATH` (a
+   globally-installed CLI). This is an explicit policy fallback; Lens never
+   requires a global install.
+
+Each candidate is verified by running `<candidate> --version`. When no candidate
+resolves, the install refuses with an actionable diagnostic (install
+`effect-lens` as a local devDependency so `node_modules/.bin/effect-lens`
+exists, or set `EFFECT_LENS_COMMAND` to an explicit command) and writes nothing,
+so a generated hook can never reference a command that cannot run. Lens does not
+recommend `npm install -g`.
 
 ### Supported mutation targets
 
@@ -270,8 +285,10 @@ rather than guessing at another config file.
 
 - the hk config is present but unreadable (`ambiguous`);
 - `install` finds no `hk.pkl` (run `hk init` first);
-- `install` finds the `effect-lens` command unavailable on `PATH` (install it
-  first, e.g. `npm install -g effect-lens`);
+- `install` finds no resolvable `effect-lens` command — no project-local
+  `node_modules/.bin/effect-lens`, no PATH command, and no valid
+  `EFFECT_LENS_COMMAND` override. The diagnostic recommends installing it as a
+  local devDependency or setting `EFFECT_LENS_COMMAND`;
 - `install`/`uninstall` finds an `effect-lens` reference that is not a
   Lens-owned step (a bare `["effect-lens"]` step or a reference in another
   hook), and cannot take ownership safely;

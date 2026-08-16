@@ -44,10 +44,11 @@ export interface CliContext {
    */
   readonly workspace?: string | undefined
   /**
-   * The `effect-lens` command name used to verify availability before a hook
-   * install writes `hk.pkl`. Defaults to `effect-lens`; overridable via the
-   * `EFFECT_LENS_COMMAND` environment variable (used by tests and unusual
-   * installs).
+   * An explicit `effect-lens` command override used before a hook install
+   * writes `hk.pkl`. When provided via the `EFFECT_LENS_COMMAND` environment
+   * variable it is authoritative for unusual installs; otherwise Lens prefers
+   * a project-local `<projectDir>/node_modules/.bin/effect-lens` binary and
+   * falls back to `effect-lens` on `PATH`.
    */
   readonly command?: string | undefined
 }

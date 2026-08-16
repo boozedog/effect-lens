@@ -453,11 +453,14 @@ target refuses atomically) and the canonicalized importer path is embedded in
 the generated command so the hook lints only that workspace's staged files.
 The binary and workspace values are shell-quoted and the whole command is
 Pkl-escaped, so a value containing spaces or shell metacharacters stays a
-single literal argument. Before writing `hk.pkl`, `install` verifies the
-`effect-lens` command is available on `PATH` and refuses with an actionable
-diagnostic when it is not. Re-running `install` when a Lens-owned block is
-already present is a no-op; to refresh the command (for example a different
-`--workspace`), run `uninstall` first.
+single literal argument. Before writing `hk.pkl`, `install` resolves the
+`effect-lens` command with a local-binary-first policy (explicit
+`EFFECT_LENS_COMMAND` override, then `<projectDir>/node_modules/.bin/effect-lens`
+for a locally pinned devDependency, then a `PATH` fallback for a global install)
+and refuses with an actionable diagnostic when no candidate resolves. It never
+requires or recommends a global install. Re-running `install` when a Lens-owned
+block is already present is a no-op; to refresh the command (for example a
+different `--workspace`), run `uninstall` first.
 
 ```sh
 effect-lens hooks install --project . --json
