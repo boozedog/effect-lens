@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/**
+/*
  * One-command release for @boozedog/effect-lens (issue #16).
  *
  * Wraps the human release sequence so a maintainer does not have to type the
@@ -17,9 +17,7 @@
  * @since 0.1.0
  */
 import { spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
-import { createInterface } from "node:readline/promises"
-import { stdin, stdout } from "node:process"
+import { readFileSync, readSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -47,9 +45,13 @@ const fail = (message) => {
   process.exit(1)
 }
 
-const prompt = async (rl, question) => {
-  const answer = await rl.question(question)
-  return answer.trim()
+// Read one line from stdin synchronously (no async/await, per the repo's own
+// Lens Effect-first rules). Blocks until the user presses Enter.
+const readLine = (question) => {
+  process.stdout.write(question)
+  const buffer = Buffer.alloc(1024)
+  const bytes = readSync(0, buffer, 0, buffer.length, null)
+  return buffer.toString("utf8", 0, bytes).replace(/\r?\n$/, "").trim()
 }
 
 // --- 1. Preflight ----------------------------------------------------------
@@ -85,29 +87,17 @@ if (dryRun) {
 }
 
 // --- 4. Confirm + OTP ------------------------------------------------------
-const rl = createInterface({ input: stdin, output: stdout })
-let confirmed = false
-try {
-  const answer = await prompt(
-    rl,
-    `\nPublish ${name}@${version} to the public npm registry and tag v${version}? [y/N] `
-  )
-  confirmed = answer.toLowerCase() === "y" || answer.toLowerCase() === "yes"
-} finally {
-  rl.close()
-}
+const answer = readLine(
+  `\nPublish ${name}@${version} to the public npm registry and tag v${version}? [y/N] `
+)
+const confirmed = answer.toLowerCase() === "y" || answer.toLowerCase() === "yes"
 if (!confirmed) {
   fail("publish not confirmed")
 }
 
 let code = otp
 if (!code) {
-  const rl2 = createInterface({ input: stdin, output: stdout })
-  try {
-    code = await prompt(rl2, "Enter npm OTP (one-time password): ")
-  } finally {
-    rl2.close()
-  }
+  code = readLine("Enter npm OTP (one-time password): ")
 }
 if (!code) {
   fail("no OTP provided")
