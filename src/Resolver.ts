@@ -295,6 +295,34 @@ export const matchPnpmImporter = (
 }
 
 /**
+ * Resolves a workspace target to a concrete lockfile-relative directory path.
+ *
+ * For a pnpm monorepo the target is matched against the lockfile importers
+ * (exact path or basename), so `--workspace foldkit` resolves to
+ * `packages/foldkit`. For a non-pnpm or unparseable lockfile the normalized
+ * target is returned as-is. Returns `null` when the target matches no single
+ * importer (unresolved or ambiguous).
+ *
+ * @since 0.0.0
+ */
+export const resolveWorkspaceDir = (
+  projectDir: string,
+  workspace: string
+): string | null => {
+  const lockfile = detectLockfile(projectDir)
+  if (lockfile === "pnpm-lock") {
+    const content = readFileSync(join(projectDir, "pnpm-lock.yaml"), "utf8")
+    if (isParseablePnpmLock(content)) {
+      const match = matchPnpmImporter(content, workspace)
+      if (match === null) return null
+      if ("ambiguous" in match) return null
+      return match.key
+    }
+  }
+  return normalizeWorkspace(workspace)
+}
+
+/**
  * Parses a `package.json` and returns the declared `effect` specifier as a
  * package identity (source `package.json`), or `null` when `effect` is not
  * declared. The specifier may be a range (e.g. `^4.0.0`); it is recorded

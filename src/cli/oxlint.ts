@@ -16,10 +16,11 @@
  */
 import * as Option from "effect/Option"
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { loadOxlintConfig } from "../operations/oxlintConfig.ts"
 import * as Review from "../operations/review.ts"
 import { type CheckMode, DEFAULT_CHECK_MODE } from "../provider/Provider.ts"
 import { rules } from "../rules/index.ts"
@@ -158,28 +159,22 @@ const buildConfig = (): Record<string, unknown> => {
 }
 
 /**
- * Loads the target repository's oxlint config (`.oxlintrc.json`, `.oxlintrc`,
- * or `oxlint.json`) from the project directory. Returns the parsed config and
- * the directory it lives in (for resolving relative plugin paths), or `null`
- * when no config is present.
+ * Loads the target repository's oxlint config from the project directory via
+ * the shared {@link loadOxlintConfig} loader (which normalizes unreadable,
+ * unparseable, or non-object config values — including valid JSON `null` — to
+ * `ambiguous`). Returns the parsed config and the directory it lives in (for
+ * resolving relative plugin paths), `{ unparseable: true }` when the config is
+ * ambiguous, or `null` when no config is present.
  *
  * @since 0.0.0
  */
 const loadProjectConfig = (
   projectDir: string
 ): { config: Record<string, unknown>; dir: string } | { unparseable: true } | null => {
-  const candidates = [".oxlintrc.json", ".oxlintrc", "oxlint.json"]
-  for (const name of candidates) {
-    const path = join(projectDir, name)
-    if (!existsSync(path)) continue
-    try {
-      const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
-      return { config: parsed, dir: projectDir }
-    } catch {
-      return { unparseable: true }
-    }
-  }
-  return null
+  const loaded = loadOxlintConfig(projectDir)
+  if (loaded.status === "missing") return null
+  if (loaded.status === "ambiguous") return { unparseable: true }
+  return { config: loaded.config, dir: projectDir }
 }
 
 /**

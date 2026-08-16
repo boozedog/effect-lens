@@ -1810,7 +1810,8 @@ The current unified-gate findings for the audited project.
   "diagnostics": [],
   "summary": { "total": 1, "errors": 1, "warnings": 0 },
   "status": 2,
-  "error": null
+  "error": null,
+  "degraded": false
 }
 ```
 
@@ -1820,7 +1821,10 @@ The current unified-gate findings for the audited project.
 first-party rules; `diagnostics` are the non-rule diagnostics (including
 unrecognized project diagnostics and per-location migration notes); `summary`
 counts findings by severity; `status` is the aggregate exit status. When oxlint
-is unavailable, `error` carries the reason and the other fields are empty.
+is unavailable, `error` carries the reason and the other fields are empty. When
+the project's oxlint config could not be parsed and oxlint fell back to the
+built-in config, `degraded` is `true` so the findings are not mistaken for the
+project's own policy.
 
 ### `Recommendation`
 

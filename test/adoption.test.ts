@@ -215,6 +215,70 @@ describe("buildAdoptionAudit (operation)", () => {
     expect(Option.getOrNull(audit.gate.error)).toBe("oxlint binary not found")
     expect(audit.diagnostics.some((d) => d.id === "adoption-gate-unavailable")).toBe(true)
   })
+
+  it("normalizes a valid JSON null oxlint config to ambiguous without crashing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-adoption-nullcfg-"))
+    writeFileSync(join(dir, ".oxlintrc.json"), "null")
+    try {
+      const audit = Adoption.buildAdoptionAudit({
+        projectDir: dir,
+        cacheDir: cacheMonoDir,
+        gate: { diagnostics: [], error: null }
+      })
+      expect(audit.oxlint.status).toBe("ambiguous")
+      expect(Option.getOrNull(audit.oxlintScopes.configPath)).toBe(".oxlintrc.json")
+      expect(audit.diagnostics.some((d) => d.id === "adoption-oxlint-ambiguous")).toBe(true)
+      expect(audit.recommendations.some((r) => r.kind === "configure-lens")).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("detects object-form jsPlugins as loaded providers with no configured rules", () => {
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-adoption-objplugin-"))
+    writeFileSync(
+      join(dir, ".oxlintrc.json"),
+      JSON.stringify({
+        jsPlugins: [{ name: "stylex", specifier: "@stylexjs/eslint-plugin" }]
+      })
+    )
+    try {
+      const audit = Adoption.buildAdoptionAudit({
+        projectDir: dir,
+        cacheDir: cacheMonoDir,
+        gate: { diagnostics: [], error: null }
+      })
+      const stylex = audit.providers.find((p) => p.provider === "stylex")
+      expect(stylex?.active).toBe(true)
+      expect(stylex?.rules).toHaveLength(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("recognizes oxlint.json as a supported config name in status and scopes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-adoption-oxlintjson-"))
+    writeFileSync(
+      join(dir, "oxlint.json"),
+      JSON.stringify({
+        jsPlugins: ["./foldstryx-plugin.ts"],
+        rules: { "foldstryx/no-async-function": "error" }
+      })
+    )
+    try {
+      const audit = Adoption.buildAdoptionAudit({
+        projectDir: dir,
+        cacheDir: cacheMonoDir,
+        gate: { diagnostics: [], error: null }
+      })
+      // oxlintStatus and the scopes both recognize oxlint.json.
+      expect(Option.getOrNull(audit.oxlint.configPath)).toBe("oxlint.json")
+      expect(Option.getOrNull(audit.oxlintScopes.configPath)).toBe("oxlint.json")
+      expect(audit.oxlint.status).toBe("missing")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe("adoptionAudit (CLI adapter)", () => {
@@ -356,5 +420,167 @@ describe("adoptionAudit (CLI adapter)", () => {
     })
     // oxlint-disable-next-line unicorn/no-array-sort -- ES2022 target; sort a fresh array
     expect(readdirSync(cacheMonoDir).sort()).toEqual(cacheBefore)
+  })
+
+  it("scopes the unified gate to the selected workspace and honours ignore patterns", () => {
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-adoption-workspace-"))
+    try {
+      writeFileSync(
+        join(dir, ".oxlintrc.json"),
+        JSON.stringify({
+          jsPlugins: [join(adoptionFixture, "foldstryx-plugin.ts")],
+          rules: { "foldstryx/no-async-function": "error" },
+          // oxlint resolves `scripts/**` relative to the config dir (the
+          // repository root), so a workspace-nested scripts dir needs the
+          // `**/scripts/**` form to prove the project's ignore config is
+          // honoured even inside the selected workspace.
+          ignorePatterns: ["**/scripts/**"]
+        })
+      )
+      // A finding inside the selected workspace.
+      mkdirSync(join(dir, "packages", "app"), { recursive: true })
+      writeFileSync(
+        join(dir, "packages", "app", "a.ts"),
+        "async function foo() {\n  return 1\n}\nvoid foo\n"
+      )
+      // A finding outside the workspace (repository root src) that must not
+      // affect the audit.
+      mkdirSync(join(dir, "src"), { recursive: true })
+      writeFileSync(
+        join(dir, "src", "b.ts"),
+        "async function bar() {\n  return 2\n}\nvoid bar\n"
+      )
+      // A finding inside the workspace but excluded by the scripts/** ignore.
+      mkdirSync(join(dir, "packages", "app", "scripts"), { recursive: true })
+      writeFileSync(
+        join(dir, "packages", "app", "scripts", "c.ts"),
+        "async function baz() {\n  return 3\n}\nvoid baz\n"
+      )
+      const result = adoptionAudit({
+        projectDir: dir,
+        cacheDir: cacheMonoDir,
+        workspace: "packages/app"
+      })
+      const json = result.json as {
+        audit: { gate: { findings: Array<{ location: { file: string } }> } }
+      }
+      const files = json.audit.gate.findings.map((f) => f.location.file)
+      // Only the workspace file is linted; the root src finding and the
+      // ignored scripts finding are excluded.
+      expect(files.some((f) => f.includes("packages/app/a.ts"))).toBe(true)
+      expect(files.some((f) => f.includes("src/b.ts"))).toBe(false)
+      expect(files.some((f) => f.includes("scripts/c.ts"))).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("marks the gate degraded and surfaces a warning when the project config is unparseable", () => {
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-adoption-degraded-"))
+    writeFileSync(join(dir, ".oxlintrc.json"), "not json")
+    mkdirSync(join(dir, "src"), { recursive: true })
+    writeFileSync(join(dir, "src", "a.ts"), "async function foo() {\n  return 1\n}\nvoid foo\n")
+    try {
+      const result = adoptionAudit({ projectDir: dir, cacheDir: cacheMonoDir })
+      const json = result.json as {
+        machineOutput: { diagnostics: Array<{ id: string }> }
+        audit: { gate: { degraded: boolean; error: string | null; summary: { total: number } } }
+      }
+      // The unparseable project config falls back to the built-in config, so
+      // the gate is degraded rather than implying the project's policy was
+      // preserved.
+      expect(json.audit.gate.degraded).toBe(true)
+      expect(json.audit.gate.error).toBeNull()
+      expect(
+        json.machineOutput.diagnostics.some((d) => d.id === "adoption-gate-degraded")
+      ).toBe(true)
+      const human = result.human.join("\n")
+      expect(human).toContain("unified gate: degraded")
+      // The degraded gate still reports the fallback findings and counts so
+      // the exit status is not presented without a visible cause.
+      expect(human).toContain(`unified gate: ${json.audit.gate.summary.total} finding(s)`)
+      expect(human).toContain("lens/no-async-function")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("does not crash on a valid JSON null oxlint config in the unified runner", () => {
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-adoption-nullrunner-"))
+    writeFileSync(join(dir, ".oxlintrc.json"), "null")
+    mkdirSync(join(dir, "src"), { recursive: true })
+    writeFileSync(join(dir, "src", "a.ts"), "async function foo() {\n  return 1\n}\nvoid foo\n")
+    try {
+      const result = adoptionAudit({ projectDir: dir, cacheDir: cacheMonoDir })
+      const json = result.json as {
+        machineOutput: { diagnostics: Array<{ id: string }> }
+        audit: { oxlint: { status: string }; gate: { degraded: boolean } }
+      }
+      // The unified runner normalizes the valid JSON null config to ambiguous
+      // (falling back to the built-in config) instead of crashing.
+      expect(json.audit.oxlint.status).toBe("ambiguous")
+      expect(json.audit.gate.degraded).toBe(true)
+      expect(
+        json.machineOutput.diagnostics.some((d) => d.id === "adoption-gate-degraded")
+      ).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("resolves a basename workspace target to its importer path for the gate", () => {
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-adoption-basename-"))
+    try {
+      writeFileSync(
+        join(dir, "pnpm-lock.yaml"),
+        [
+          "lockfileVersion: '9.0'",
+          "",
+          "importers:",
+          "  packages/app:",
+          "    dependencies:",
+          "      effect:",
+          "        specifier: 4.0.0-beta.83",
+          "        version: 4.0.0-beta.83",
+          "",
+          "packages:",
+          "  effect@4.0.0-beta.83:",
+          "    resolution: {integrity: sha512-beta83integrity}",
+          ""
+        ].join("\n")
+      )
+      writeFileSync(
+        join(dir, ".oxlintrc.json"),
+        JSON.stringify({
+          jsPlugins: [join(adoptionFixture, "foldstryx-plugin.ts")],
+          rules: { "foldstryx/no-async-function": "error" }
+        })
+      )
+      mkdirSync(join(dir, "packages", "app"), { recursive: true })
+      writeFileSync(
+        join(dir, "packages", "app", "a.ts"),
+        "async function foo() {\n  return 1\n}\nvoid foo\n"
+      )
+      // A root src finding outside the workspace that must not be linted.
+      mkdirSync(join(dir, "src"), { recursive: true })
+      writeFileSync(
+        join(dir, "src", "b.ts"),
+        "async function bar() {\n  return 2\n}\nvoid bar\n"
+      )
+      // `--workspace app` (basename) resolves to the packages/app importer.
+      const result = adoptionAudit({
+        projectDir: dir,
+        cacheDir: cacheMonoDir,
+        workspace: "app"
+      })
+      const json = result.json as {
+        audit: { gate: { findings: Array<{ location: { file: string } }> } }
+      }
+      const files = json.audit.gate.findings.map((f) => f.location.file)
+      expect(files.some((f) => f.includes("packages/app/a.ts"))).toBe(true)
+      expect(files.some((f) => f.includes("src/b.ts"))).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

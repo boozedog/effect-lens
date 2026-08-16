@@ -25,8 +25,6 @@
  * @since 0.0.0
  */
 import * as Option from "effect/Option"
-import { existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
 import {
   AdoptionAudit,
   makeAdoptionAudit,
@@ -47,40 +45,10 @@ import { lensProvider } from "../provider/lens.ts"
 import { stylexProvider } from "../provider/stylex.ts"
 import * as Resolver from "../Resolver.ts"
 import { rules } from "../rules/index.ts"
+import { jsPluginMatches, loadOxlintConfig } from "./oxlintConfig.ts"
 import * as Review from "./review.ts"
 import { oxlintStatus } from "./setup.ts"
 import { makeDiagnostic } from "./shared.ts"
-
-/**
- * The oxlint config file names, in precedence order.
- *
- * @since 0.0.0
- */
-const OXLINT_CONFIG_NAMES = [".oxlintrc.json", ".oxlintrc", "oxlint.json"]
-
-/**
- * Reads and parses the project's oxlint config, returning the parsed object
- * and the config file name, or `null` when no config is present.
- *
- * @since 0.0.0
- */
-const readOxlintConfig = (
-  projectDir: string
-): { config: Record<string, unknown>; name: string } | null => {
-  for (const name of OXLINT_CONFIG_NAMES) {
-    const path = join(projectDir, name)
-    if (!existsSync(path)) continue
-    try {
-      const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
-      return { config: parsed, name }
-    } catch {
-      // An unparseable config is surfaced by the oxlintStatus contract as
-      // `ambiguous`; the scopes are reported as empty.
-      return { config: {}, name }
-    }
-  }
-  return null
-}
 
 /**
  * Detects the oxlint configuration scopes (ignore patterns, overrides, and
@@ -90,9 +58,12 @@ const readOxlintConfig = (
  * @since 0.0.0
  */
 const detectOxlintScopes = (projectDir: string): OxlintScopes => {
-  const loaded = readOxlintConfig(projectDir)
-  if (loaded === null) {
+  const loaded = loadOxlintConfig(projectDir)
+  if (loaded.status === "missing") {
     return makeOxlintScopes({ configPath: null })
+  }
+  if (loaded.status === "ambiguous") {
+    return makeOxlintScopes({ configPath: loaded.name })
   }
   const { config, name } = loaded
   const ignorePatterns = Array.isArray(config.ignorePatterns)
@@ -137,8 +108,7 @@ const configuredRulesByProvider = (
  * @since 0.0.0
  */
 const providerLoaded = (config: Record<string, unknown>, needle: string): boolean =>
-  Array.isArray(config.jsPlugins) &&
-  config.jsPlugins.some((p) => typeof p === "string" && p.includes(needle))
+  jsPluginMatches(config.jsPlugins, needle)
 
 /**
  * Builds the provider status list for the audit.
@@ -231,6 +201,7 @@ const buildOverlaps = (config: Record<string, unknown>): Array<{
 const buildGate = (gate: {
   diagnostics: Array<Review.OxlintDiagnostic>
   error: string | null
+  configWarning?: string | null
 }): {
   findings: Array<import("../Finding.ts").Finding>
   migration: Array<import("../Adoption.ts").MigrationEntry>
@@ -238,6 +209,7 @@ const buildGate = (gate: {
   summary: import("../Adoption.ts").GateSummary
   status: number
   error: string | null
+  degraded: boolean
 } => {
   if (gate.error !== null) {
     return {
@@ -246,13 +218,28 @@ const buildGate = (gate: {
       diagnostics: [],
       summary: makeGateSummary({ total: 0, errors: 0, warnings: 0 }),
       status: 0,
-      error: gate.error
+      error: gate.error,
+      degraded: false
     }
   }
   const review = Review.review({
     input: Review.makeReviewInput({ diagnostics: gate.diagnostics }),
     mode: "unified"
   })
+  const degraded = gate.configWarning !== null && gate.configWarning !== undefined
+  const diagnostics = [...review.diagnostics]
+  if (degraded) {
+    // The project config could not be parsed, so oxlint fell back to the
+    // built-in config; the findings below do not reflect the project's policy.
+    diagnostics.push(
+      makeDiagnostic({
+        id: "adoption-gate-degraded",
+        severity: "warning",
+        message: gate.configWarning ??
+          "project oxlint config could not be parsed; using the built-in config"
+      })
+    )
+  }
   return {
     findings: [...review.findings],
     migration: review.migration.entries.map((e) =>
@@ -263,14 +250,15 @@ const buildGate = (gate: {
         recommendation: e.recommendation
       })
     ),
-    diagnostics: [...review.diagnostics],
+    diagnostics,
     summary: makeGateSummary({
       total: review.summary.total,
       errors: review.summary.errors,
       warnings: review.summary.warnings
     }),
     status: review.status,
-    error: null
+    error: null,
+    degraded
   }
 }
 
@@ -445,7 +433,11 @@ export const buildAdoptionAudit = (args: {
   projectDir: string
   cacheDir: string
   workspace?: string | undefined
-  gate?: { diagnostics: Array<Review.OxlintDiagnostic>; error: string | null }
+  gate?: {
+    diagnostics: Array<Review.OxlintDiagnostic>
+    error: string | null
+    configWarning?: string | null
+  }
 }): AdoptionAudit => {
   const resolution = Resolver.resolveEffectIdentity(args.projectDir, {
     workspace: args.workspace
@@ -457,12 +449,12 @@ export const buildAdoptionAudit = (args: {
   })
   const oxlint = oxlintStatus(args.projectDir)
   const oxlintScopes = detectOxlintScopes(args.projectDir)
-  const loaded = readOxlintConfig(args.projectDir)
-  const config = loaded?.config ?? {}
+  const loaded = loadOxlintConfig(args.projectDir)
+  const config = loaded.status === "present" ? loaded.config : {}
   const providers = buildProviders(config)
   const overlaps = buildOverlaps(config)
   const gate = buildGate(
-    args.gate ?? { diagnostics: [], error: null }
+    args.gate ?? { diagnostics: [], error: null, configWarning: null }
   )
   const recommendations = buildRecommendations({
     resolution,

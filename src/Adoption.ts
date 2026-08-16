@@ -197,7 +197,10 @@ export const makeGateSummary = (args: {
  * are the non-rule diagnostics (including unrecognized project diagnostics and
  * per-location migration notes); `summary` counts findings by severity;
  * `status` is the aggregate exit status. When oxlint is unavailable, `error`
- * carries the reason and the other fields are empty.
+ * carries the reason and the other fields are empty. When the project's
+ * oxlint config could not be parsed and oxlint fell back to the built-in
+ * config, `degraded` is true so the findings are not mistaken for the
+ * project's own policy.
  *
  * @since 0.0.0
  */
@@ -207,7 +210,8 @@ export class GateFindings extends Schema.Class<GateFindings>("GateFindings")({
   diagnostics: Schema.Array(Diagnostic),
   summary: GateSummary,
   status: Schema.Number,
-  error: Schema.OptionFromNullOr(Schema.String)
+  error: Schema.OptionFromNullOr(Schema.String),
+  degraded: Schema.Boolean
 }) {}
 
 /**
@@ -222,6 +226,7 @@ export const makeGateFindings = (args: {
   summary: GateSummary
   status: number
   error?: string | null
+  degraded?: boolean
 }): GateFindings =>
   new GateFindings({
     findings: args.findings,
@@ -229,7 +234,8 @@ export const makeGateFindings = (args: {
     diagnostics: args.diagnostics,
     summary: args.summary,
     status: args.status,
-    error: Option.fromNullishOr(args.error)
+    error: Option.fromNullishOr(args.error),
+    degraded: args.degraded ?? false
   })
 
 /**

@@ -21,6 +21,7 @@
  * @since 0.0.0
  */
 import * as Option from "effect/Option"
+import { join } from "node:path"
 import type { MigrationEntry } from "../../Adoption.ts"
 import { aggregateStatus, MachineOutput, makeMachineOutput } from "../../ExitStatus.ts"
 import type { Finding } from "../../Finding.ts"
@@ -35,16 +36,34 @@ import type { CliContext, CliResult } from "../types.ts"
  * @since 0.0.0
  */
 export const adoptionAudit = (context: CliContext): CliResult => {
+  // The lint target is the selected workspace's resolved importer path (so a
+  // basename target like `foldkit` lints `packages/foldkit`) when one is
+  // given, otherwise the repository root. `projectDir` remains the
+  // config/lockfile boundary: oxlint resolves the project config and the
+  // transient unified config from `projectDir`, while only the workspace tree
+  // is scanned so findings outside the selected workspace do not affect the
+  // audit.
+  const target = context.workspace === undefined
+    ? context.projectDir
+    : join(
+      context.projectDir,
+      Adoption.Resolver.resolveWorkspaceDir(context.projectDir, context.workspace) ??
+        context.workspace
+    )
   const oxlint = runOxlint({
     projectDir: context.projectDir,
-    target: context.projectDir,
+    target,
     mode: "unified"
   })
   const audit = Adoption.buildAdoptionAudit({
     projectDir: context.projectDir,
     cacheDir: context.cacheDir,
     workspace: context.workspace,
-    gate: { diagnostics: oxlint.diagnostics, error: oxlint.error }
+    gate: {
+      diagnostics: oxlint.diagnostics,
+      error: oxlint.error,
+      configWarning: oxlint.configWarning
+    }
   })
   const machineOutput = makeMachineOutput({
     status: aggregateStatus({
@@ -103,6 +122,12 @@ const buildHuman = (audit: Adoption.AdoptionAudit): Array<string> => {
   if (gateError !== null) {
     lines.push(`unified gate: unavailable (${gateError})`)
   } else {
+    if (audit.gate.degraded) {
+      lines.push(
+        "unified gate: degraded (project oxlint config could not be parsed; " +
+          "findings use the built-in config, not the project's policy)"
+      )
+    }
     lines.push(
       `unified gate: ${audit.gate.summary.total} finding(s) ` +
         `(${audit.gate.summary.errors} error(s), ${audit.gate.summary.warnings} warning(s))`

@@ -29,6 +29,7 @@ import {
   SetupStep
 } from "../Setup.ts"
 import * as Hooks from "./hooks.ts"
+import { jsPluginMatches, loadOxlintConfig } from "./oxlintConfig.ts"
 import { makeDiagnostic } from "./shared.ts"
 
 /**
@@ -79,52 +80,34 @@ const detectPackageManager = (projectDir: string, resolution: Resolution): strin
 /**
  * Inspects the project's oxlint / Lens configuration.
  *
- * A parseable `.oxlintrc.json` or `.oxlintrc` that references the Lens plugin
- * (`jsPlugins`) or `lens/` rules is `configured`; a parseable config without
- * Lens is `missing`; an unreadable or unparseable config is `ambiguous`.
+ * A parseable oxlint config (`.oxlintrc.json`, `.oxlintrc`, or `oxlint.json`)
+ * that references the Lens plugin (`jsPlugins`) or `lens/` rules is
+ * `configured`; a parseable config without Lens is `missing`; an unreadable,
+ * unparseable, or non-object config is `ambiguous`.
  *
  * @since 0.0.0
  */
 export const oxlintStatus = (projectDir: string): OxlintStatus => {
-  const relName = [".oxlintrc.json", ".oxlintrc"]
-    .find((name) => existsSync(join(projectDir, name))) ?? null
-  if (relName === null) {
+  const loaded = loadOxlintConfig(projectDir)
+  if (loaded.status === "missing") {
     return makeOxlintStatus({ configPath: null, lensPluginConfigured: false, status: "missing" })
   }
-  const file = join(projectDir, relName)
-  let content: string
-  try {
-    content = readFileSync(file, "utf8")
-  } catch {
+  if (loaded.status === "ambiguous") {
     return makeOxlintStatus({
-      configPath: relName,
+      configPath: loaded.name,
       lensPluginConfigured: false,
       status: "ambiguous"
     })
   }
-  let data: unknown
-  try {
-    data = JSON.parse(content)
-  } catch {
-    return makeOxlintStatus({
-      configPath: relName,
-      lensPluginConfigured: false,
-      status: "ambiguous"
-    })
-  }
-  const obj = (typeof data === "object" && data !== null
-    ? data
-    : {}) as Record<string, unknown>
-  const jsPlugins = obj.jsPlugins
-  const rules = obj.rules
-  const lensPlugin = Array.isArray(jsPlugins) &&
-    jsPlugins.some((p) => typeof p === "string" && p.includes("lens"))
+  const { config, name } = loaded
+  const rules = config.rules
+  const lensPlugin = jsPluginMatches(config.jsPlugins, "lens")
   const lensRules = rules !== null &&
     typeof rules === "object" &&
     Object.keys(rules as Record<string, unknown>).some((key) => key.startsWith("lens/"))
   const configured = lensPlugin || lensRules
   return makeOxlintStatus({
-    configPath: relName,
+    configPath: name,
     lensPluginConfigured: configured,
     status: configured ? "configured" : "missing"
   })
