@@ -1,6 +1,7 @@
 # Package publication and release (issue #16)
 
-Effect Lens is published as a stable npm CLI package named `effect-lens`. This
+Effect Lens is published as a stable npm CLI package named
+`@boozedog/effect-lens`. This
 document describes the package metadata, the published contents, the runtime
 dependencies, the Node requirement, the version/release policy, and the
 Nub-native development and verification workflow. This repository never
@@ -11,7 +12,8 @@ human-authorized step.
 
 The public package metadata lives in `package.json`:
 
-- **name** — `effect-lens`.
+- **name** — `@boozedog/effect-lens`. The CLI binary it exposes is
+  `effect-lens` (unchanged).
 - **version** — `0.1.0` (the first stable release). The version is the single
   source of truth for the CLI's `--version` output and the drift report's
   `toolchain.lensVersion`; it is read from `package.json` at runtime
@@ -96,17 +98,18 @@ stripping to files under `node_modules`, so a published package cannot ship
 Consumers pin the exact version they want. With Nub:
 
 ```sh
-nub add -g effect-lens@0.1.0        # pin a specific version
+nub add -g @boozedog/effect-lens@0.1.0        # pin a specific version
 ```
 
 With npm:
 
 ```sh
-npm install -g effect-lens@0.1.0    # pin a specific version
+npm install -g @boozedog/effect-lens@0.1.0    # pin a specific version
 ```
 
 To roll back to a previous release, install the earlier version explicitly
-(e.g. `nub add -g effect-lens@0.0.1` or `npm install -g effect-lens@0.0.1`).
+(e.g. `nub add -g @boozedog/effect-lens@0.0.1` or
+`npm install -g @boozedog/effect-lens@0.0.1`).
 Because the CLI is a single global package with no runtime dependency on Nub,
 rollback is a simple version swap; there is no state to migrate.
 
@@ -170,10 +173,11 @@ publishing:
 
 ## Consumer installation
 
-Consumers install the published package with their package manager of choice:
+Consumers install the published scoped package with their package manager of
+choice. The installed command remains `effect-lens`:
 
 ```sh
-npm install -g effect-lens        # or: nub add -g effect-lens
+npm install -g @boozedog/effect-lens        # or: nub add -g @boozedog/effect-lens
 effect-lens --version
 ```
 

@@ -238,7 +238,7 @@ const resolveHookCommand = (
   return {
     kind: "unavailable",
     detail: "cannot install hooks: no effect-lens command is available; install " +
-      "effect-lens as a local devDependency so node_modules/.bin/effect-lens " +
+      "@boozedog/effect-lens as a local devDependency so node_modules/.bin/effect-lens " +
       "exists, or set EFFECT_LENS_COMMAND to an explicit command",
     id: "hooks-install-hk-command-unavailable"
   }

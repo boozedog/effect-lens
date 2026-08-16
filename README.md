@@ -37,11 +37,12 @@ snapshot); every other command stays offline.
 
 ## Installation
 
-Effect Lens is published as the `effect-lens` npm CLI package. Install it
-globally with your package manager of choice:
+Effect Lens is published as the `@boozedog/effect-lens` npm CLI package. The
+installed command is `effect-lens`. Install it globally with your package
+manager of choice:
 
 ```sh
-npm install -g effect-lens        # or: nub add -g effect-lens
+npm install -g @boozedog/effect-lens        # or: nub add -g @boozedog/effect-lens
 effect-lens --version
 ```
 

@@ -243,7 +243,7 @@ is reproducible for a consumer that pins the CLI as a local dependency:
 2. **Project-local binary** — `<projectDir>/node_modules/.bin/effect-lens` when
    it exists and is executable/resolvable. Its absolute path is embedded, so the
    generated hook does not depend on the consumer's `PATH` at hook time. This is
-   how a consumer that installs `effect-lens` as a local devDependency gets a
+   how a consumer that installs `@boozedog/effect-lens` as a local devDependency gets a
    reproducible hook.
 3. **PATH fallback** — the bare `effect-lens` command on `PATH` (a
    globally-installed CLI). This is an explicit policy fallback; Lens never
@@ -251,7 +251,7 @@ is reproducible for a consumer that pins the CLI as a local dependency:
 
 Each candidate is verified by running `<candidate> --version`. When no candidate
 resolves, the install refuses with an actionable diagnostic (install
-`effect-lens` as a local devDependency so `node_modules/.bin/effect-lens`
+`@boozedog/effect-lens` as a local devDependency so `node_modules/.bin/effect-lens`
 exists, or set `EFFECT_LENS_COMMAND` to an explicit command) and writes nothing,
 so a generated hook can never reference a command that cannot run. Lens does not
 recommend `npm install -g`.

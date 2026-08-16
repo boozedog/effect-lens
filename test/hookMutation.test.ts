@@ -597,7 +597,7 @@ describe("hooks install command resolution", () => {
   /**
    * A temp project with a real `hk.pkl` and a project-local
    * `node_modules/.bin/effect-lens` executable, simulating a consumer that
-   * installs effect-lens as a local devDependency (no global install).
+   * installs @boozedog/effect-lens as a local devDependency (no global install).
    *
    * @since 0.0.0
    */
@@ -709,6 +709,11 @@ describe("hooks install command resolution", () => {
         // The diagnostic is actionable and does not recommend a global install.
         expect(d?.message).toContain("devDependency")
         expect(d?.message).not.toContain("npm install -g")
+        // It names the scoped package (not the occupied unscoped name) while
+        // keeping the bin path as effect-lens.
+        expect(d?.message).toContain("@boozedog/effect-lens")
+        expect(d?.message).toContain("node_modules/.bin/effect-lens")
+        expect(d?.message).not.toContain("install effect-lens as a local devDependency")
         // No partial write: the config is unchanged.
         expect(read(dir)).toBe(before)
       })

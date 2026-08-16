@@ -30,7 +30,8 @@ nub run cli -- <command> [options]
 
 Within this repository the CLI runs the TypeScript entrypoint directly with
 Node's native type stripping (`nub run cli`), which requires Node 23.6+ (or
-Node 22.6+ with `--experimental-strip-types`). The published `effect-lens`
+Node 22.6+ with `--experimental-strip-types`). The published
+`@boozedog/effect-lens`
 package ships compiled JavaScript (`dist/`), so the published `bin/effect-lens.mjs`
 launcher runs `dist/cli/index.js` directly and requires only Node `>=22.6`
 without type stripping (see `docs/packaging.md`).

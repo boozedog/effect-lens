@@ -44,7 +44,7 @@ import { fileURLToPath } from "node:url"
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"))
 const version = pkg.version
-const tarballName = `effect-lens-${version}.tgz`
+const tarballName = `boozedog-effect-lens-${version}.tgz`
 
 const run = (cmd, args, opts = {}) => {
   const result = spawnSync(cmd, args, { encoding: "utf8", ...opts })
@@ -171,7 +171,7 @@ try {
   const entry = dryRunJson[0]
   const paths = entry.files.map((f) => f.path)
 
-  check(entry.name === "effect-lens", `package name is effect-lens (got ${entry.name})`)
+  check(entry.name === "@boozedog/effect-lens", `package name is @boozedog/effect-lens (got ${entry.name})`)
   check(entry.version === version, `package version is ${version} (got ${entry.version})`)
   check(entry.filename === tarballName, `tarball filename is ${tarballName} (got ${entry.filename})`)
 
@@ -231,7 +231,7 @@ try {
         private: true,
         type: "module",
         dependencies: {
-          "effect-lens": `file:${tarball}`,
+          "@boozedog/effect-lens": `file:${tarball}`,
           "effect": "4.0.0-rc.109"
         }
       },
@@ -301,7 +301,7 @@ try {
         private: true,
         type: "module",
         dependencies: {
-          "effect-lens": `file:${tarball}`,
+          "@boozedog/effect-lens": `file:${tarball}`,
           "effect": "4.0.0-rc.109"
         }
       },
