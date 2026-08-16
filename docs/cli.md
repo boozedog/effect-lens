@@ -28,9 +28,12 @@ Within this repository, the same entrypoint is available as:
 nub run cli -- <command> [options]
 ```
 
-The CLI runs the TypeScript entrypoint with Node's native type stripping, so it
-requires Node 23.6+ (or Node 22.6+ with `--experimental-strip-types`, which the
-`bin/effect-lens.mjs` launcher passes automatically).
+Within this repository the CLI runs the TypeScript entrypoint directly with
+Node's native type stripping (`nub run cli`), which requires Node 23.6+ (or
+Node 22.6+ with `--experimental-strip-types`). The published `effect-lens`
+package ships compiled JavaScript (`dist/`), so the published `bin/effect-lens.mjs`
+launcher runs `dist/cli/index.js` directly and requires only Node `>=22.6`
+without type stripping (see `docs/packaging.md`).
 
 ## Global options
 
@@ -491,8 +494,10 @@ check passes; it never touches project configuration.
   crash. The channel policy default is the "more mature" rule (a project may
   move to any channel at or after its declared channel); a stricter policy is
   injectable but not yet exposed as a CLI flag.
-- The CLI requires Node's native type stripping (Node 23.6+, or 22.6+ with
-  `--experimental-strip-types`).
+- The published CLI requires Node `>=22.6` and runs compiled JavaScript; it
+  does not require native type stripping. The in-repository `nub run cli`
+  entrypoint runs TypeScript source directly and requires Node 23.6+ (or 22.6+
+  with `--experimental-strip-types`).
 
 ## Output contract
 

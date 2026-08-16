@@ -230,7 +230,7 @@ describe("drift", () => {
         entries: Array<{ kind: string }>
       }
     }
-    expect(json.report.toolchain.lensVersion).toBe("0.0.0")
+    expect(json.report.toolchain.lensVersion).toBe("0.1.0")
     expect(json.report.entries.length).toBeGreaterThan(0)
     expect(json.report.entries.every((e) => e.kind === "compatible")).toBe(true)
   })

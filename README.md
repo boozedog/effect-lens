@@ -35,6 +35,21 @@ Most commands are read-only; `setup --apply`, `hooks install|uninstall`, and
 `freshness` is the only network-backed command (it fetches an explicit registry
 snapshot); every other command stays offline.
 
+## Installation
+
+Effect Lens is published as the `effect-lens` npm CLI package. Install it
+globally with your package manager of choice:
+
+```sh
+npm install -g effect-lens        # or: nub add -g effect-lens
+effect-lens --version
+```
+
+The CLI requires Node `>=22.6`. It does not require Nub to be installed
+globally at runtime. The published package ships compiled JavaScript (see
+`docs/packaging.md` for the package metadata, published contents, runtime
+dependencies, and release policy).
+
 ## CLI
 
 The CLI is a thin adapter over the shared core operations. Run `nub run cli -- --help`
@@ -66,7 +81,10 @@ nub install --frozen-lockfile
 
 All scripts are invoked through `nub run` (e.g. `nub run verify`); pnpm is
 neither required nor supported. The canonical validation path is
-`nub run verify` (see `docs/ci.md`).
+`nub run verify` (see `docs/ci.md`). Packaging is Nub-native too: `nub run
+build` compiles `src/` to `dist/`, `nub pack --dry-run` lists the intended
+tarball contents, and `nub run pack:check` verifies the packed artifact and a
+clean consumer install (see `docs/packaging.md`).
 
 ## Self-dogfood
 

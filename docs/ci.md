@@ -19,6 +19,11 @@ and every `v*` tag. The same path is available locally as `nub run verify` and
 5. `nub run test` — the vitest suite.
 6. `nub run dogfood` — the self-dogfood check (see `docs/dogfood.md`).
 7. `nub run policy` — the policy/metadata validation described below.
+8. `nub run pack:check` — the package publication check (see
+   `docs/packaging.md`): it asserts the packed tarball contents, then installs
+   the tarball into a clean consumer fixture with Nub and runs the CLI there to
+   prove the published artifact is self-contained and runnable without a source
+   checkout or a globally installed Nub at runtime. It never publishes.
 
 `nub run release:check` is an alias for `nub run verify`; it is the release
 self-review gate and is run by the `release` CI job on `v*` tags.
@@ -62,7 +67,9 @@ re-downloading tarballs.
 The checks are read-only with respect to project source, packs, and
 configuration. They require no network access beyond the dependency install
 performed by CI setup: the dogfood and policy checks use only the checked-out
-source and the committed fixture cache.
+source and the committed fixture cache. The `pack:check` step's clean consumer
+fixture `nub install` may resolve the runtime dependencies (`effect`, `oxlint`,
+`typescript`) from the registry if they are not already in the Nub store.
 
 ## Policy/metadata validation (`nub run policy`)
 
@@ -113,6 +120,21 @@ per-check summary that names the failing check and the assertion that broke.
 - The package-manager guard fails with exit `1` when an active project/CI/docs
   file references pnpm as a required tool (see
   `scripts/package-manager-guard.mjs`).
+
+## Package publication check (`nub run pack:check`)
+
+`scripts/package-check.mjs` verifies the packed `effect-lens` artifact without
+publishing. It builds `dist/`, runs `nub pack --dry-run --json` to assert the
+intended contents (the CLI bin, the compiled runtime modules, `package.json`,
+and `README.md`) and the exclusion of development artifacts (`test/`, `docs/`,
+`scripts/`, `.github/`, `src/`, lockfiles, caches, and configs), then runs
+`nub pack` to a temporary directory, installs the tarball into a clean consumer
+fixture with `nub install`, and runs the CLI there (`--version`, `--help`, a
+read-only `doctor`, and the default `check` over a fixture that contains a
+known Lens violation and a real `node_modules`, asserting the finding is
+reported, oxlint starts without `ENOBUFS`, and only fixture sources are
+linted). It exits `0` when every check passes and `1` otherwise. See
+`docs/packaging.md` for the full package metadata and release policy.
 
 ## What is enforced now vs deferred
 

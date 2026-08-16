@@ -17,7 +17,7 @@
 import * as Option from "effect/Option"
 import { spawnSync } from "node:child_process"
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import * as Review from "../operations/review.ts"
@@ -25,6 +25,60 @@ import { type CheckMode, DEFAULT_CHECK_MODE } from "../provider/Provider.ts"
 import { rules } from "../rules/index.ts"
 
 const moduleDir = dirname(fileURLToPath(import.meta.url))
+
+/**
+ * Resolves the Lens plugin entrypoint relative to this module. From a
+ * checked-out source tree the plugin is `src/plugin/index.ts`; from the
+ * published package it is the compiled `dist/plugin/index.js`. The `.ts` path
+ * is preferred when present so the source tree and the published artifact both
+ * resolve correctly.
+ *
+ * @since 0.1.0
+ */
+const resolvePluginPath = (): string => {
+  const tsPath = resolve(moduleDir, "..", "plugin", "index.ts")
+  if (existsSync(tsPath)) return tsPath
+  return resolve(moduleDir, "..", "plugin", "index.js")
+}
+
+/**
+ * Walks up from `start` looking for the nearest `node_modules/.bin/oxlint`.
+ * This resolves the oxlint binary whether it is a dependency of the
+ * effect-lens package (published, in an isolated virtual store) or a
+ * devDependency at the repository root (source checkout). Returns `null` when
+ * no copy is found within the walk.
+ *
+ * @since 0.1.0
+ */
+const findUpOxlintBin = (start: string): string | null => {
+  let dir = start
+  for (let i = 0; i < 12; i++) {
+    const candidate = join(dir, "node_modules", ".bin", "oxlint")
+    if (existsSync(candidate)) return candidate
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return null
+}
+
+/**
+ * Builds the `--ignore-pattern` flags that keep oxlint from walking the
+ * dependency tree when it lints a whole project directory. The Nub isolated
+ * virtual store lives under `node_modules/.store`, and its packages are
+ * symlinked into the per-user pm store under `~/.cache/nub`; oxlint follows
+ * those symlinks and reports the real paths, so both the `node_modules` tree
+ * and the pm store must be ignored. Returns an array of `--ignore-pattern`
+ * flag pairs ready to splice into the oxlint argv.
+ *
+ * @since 0.1.0
+ */
+const buildIgnorePatterns = (): Array<string> => {
+  const patterns = ["**/node_modules/**", "**/.store/**"]
+  const pmStore = join(homedir(), ".cache", "nub")
+  if (existsSync(pmStore)) patterns.push(`${pmStore}/**`)
+  return patterns.flatMap((p) => ["--ignore-pattern", p])
+}
 
 /**
  * The prefix of the transient oxlint config written into the project directory
@@ -69,8 +123,8 @@ export interface OxlintRun {
  * @since 0.0.0
  */
 const resolveOxlintBin = (projectDir: string): string | null => {
-  const local = join(moduleDir, "..", "..", "node_modules", ".bin", "oxlint")
-  if (existsSync(local)) return local
+  const local = findUpOxlintBin(moduleDir)
+  if (local !== null) return local
   const project = join(projectDir, "node_modules", ".bin", "oxlint")
   if (existsSync(project)) return project
   const probe = spawnSync("oxlint", ["--version"], { encoding: "utf8" })
@@ -86,7 +140,7 @@ const resolveOxlintBin = (projectDir: string): string | null => {
  * @since 0.0.0
  */
 const buildConfig = (): Record<string, unknown> => {
-  const pluginPath = resolve(moduleDir, "..", "plugin", "index.ts")
+  const pluginPath = resolvePluginPath()
   const lensRules: Record<string, string> = {}
   for (const rule of rules) {
     lensRules[rule.id] = rule.severity
@@ -142,7 +196,7 @@ const composeConfig = (args: {
   configDir: string
   base: Record<string, unknown>
 }): Record<string, unknown> => {
-  const pluginPath = resolve(moduleDir, "..", "plugin", "index.ts")
+  const pluginPath = resolvePluginPath()
   const jsPlugins = Array.isArray(args.base.jsPlugins)
     ? args.base.jsPlugins.map((p) => (typeof p === "string" ? resolve(args.configDir, p) : p))
     : []
@@ -293,9 +347,11 @@ export const runOxlint = (args: {
   }
   const { configPath, configSource, projectConfigPath, warning } = prepared
   try {
-    const result = spawnSync(oxlintBin, ["-c", configPath, "--format", "json", args.target], {
-      encoding: "utf8"
-    })
+    const result = spawnSync(
+      oxlintBin,
+      ["-c", configPath, "--format", "json", ...buildIgnorePatterns(), args.target],
+      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }
+    )
     if (result.error !== undefined) {
       return {
         diagnostics: [],

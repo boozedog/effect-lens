@@ -49,7 +49,7 @@ describe("CLI dispatch", () => {
   it("prints the version for --version and exits 0", () => {
     const { stdout, status } = runCli(["--version"])
     expect(status).toBe(0)
-    expect(stdout).toContain("effect-lens 0.0.0")
+    expect(stdout).toContain("effect-lens 0.1.0")
   })
 
   it("strips a leading -- separator (pnpm passes one before script args)", () => {

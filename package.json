@@ -1,19 +1,43 @@
 {
   "name": "effect-lens",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "An advisory CLI for Effect v4 TypeScript development: doctor, drift, check, setup, hooks, packs, and freshness.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/boozedog/effect-lens.git"
+  },
+  "keywords": [
+    "effect",
+    "typescript",
+    "lint",
+    "cli",
+    "advisory",
+    "oxlint"
+  ],
+  "author": "Effect Lens contributors",
   "bin": {
     "effect-lens": "./bin/effect-lens.mjs"
   },
-  "private": true,
+  "files": [
+    "bin",
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
+  "dependencies": {
+    "effect": "4.0.0-rc.109",
+    "oxlint": "^1.78.0",
+    "typescript": "^5.9.0"
+  },
   "devDependencies": {
     "@effect/vitest": "4.0.0-rc.109",
     "@oxlint/plugins": "^1.78.0",
     "@types/node": "^26.1.2",
     "dprint": "^0.55.2",
-    "effect": "4.0.0-rc.109",
-    "oxlint": "^1.78.0",
-    "typescript": "^5.9.0",
     "vitest": "4.1.10"
   },
   "engines": {
@@ -22,16 +46,19 @@
   "scripts": {
     "check": "tsc -b tsconfig.json",
     "typecheck": "tsc -b tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "nub run build",
     "cli": "node --experimental-strip-types src/cli/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "oxlint",
     "format": "dprint fmt",
     "format:check": "dprint check",
-    "verify": "nub run pm-guard && nub run lint && nub run format:check && nub run check && nub run test && nub run dogfood && nub run policy",
+    "verify": "nub run pm-guard && nub run lint && nub run format:check && nub run check && nub run test && nub run dogfood && nub run policy && nub run pack:check",
     "dogfood": "node scripts/dogfood.mjs",
     "policy": "node --experimental-strip-types scripts/policy.mjs",
     "pm-guard": "node scripts/package-manager-guard.mjs",
+    "pack:check": "node --experimental-strip-types scripts/package-check.mjs",
     "release:check": "nub run verify"
   },
   "devEngines": {
