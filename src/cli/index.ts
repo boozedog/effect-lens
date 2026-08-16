@@ -4,7 +4,7 @@
  *
  * A thin adapter over the shared core operations. It parses
  * arguments with Node's standard library, dispatches to the `doctor`, `drift`,
- * `check`, `setup`, `hooks`, `packs`, and `freshness` commands, renders human
+ * `check`, `setup`, `hooks`, `packs`, `adoption`, and `freshness` commands, renders human
  * or JSON output, and sets the process exit code from the resulting
  * {@link MachineOutput} (0 ok, 1 warning, 2 error). It never re-implements
  * policy; `setup --apply`, `hooks install|uninstall`, and `packs fetch` are
@@ -20,6 +20,7 @@ import { resolve } from "node:path"
 import { parseArgs } from "node:util"
 import { Exit } from "../ExitStatus.ts"
 import { type CheckMode, DEFAULT_CHECK_MODE } from "../provider/Provider.ts"
+import { adoptionAudit } from "./commands/adoption.ts"
 import { check } from "./commands/check.ts"
 import { doctor } from "./commands/doctor.ts"
 import { drift } from "./commands/drift.ts"
@@ -41,6 +42,7 @@ Commands:
   setup    Build a setup plan (requires --dry-run or --apply).
   hooks    Manage hook-manager checks (subcommand: status, install, uninstall).
   packs    Report, plan, or explicitly fetch reference packs (subcommand: status, plan, fetch).
+  adoption  Build a read-only staged-adoption audit (subcommand: audit).
   freshness  Advise on the newest allowed Effect version and reference pack (network-backed).
 
 Options:
@@ -284,6 +286,17 @@ const main = (): void => {
       } else {
         process.stderr.write(
           `error: unknown packs subcommand: ${positionals[1] ?? "(none)"}\n\n${USAGE}`
+        )
+        process.exitCode = Exit.Error
+        return
+      }
+      break
+    case "adoption":
+      if (positionals[1] === "audit") {
+        result = adoptionAudit(context)
+      } else {
+        process.stderr.write(
+          `error: unknown adoption subcommand: ${positionals[1] ?? "(none)"}\n\n${USAGE}`
         )
         process.exitCode = Exit.Error
         return

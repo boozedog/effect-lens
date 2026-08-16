@@ -44,6 +44,7 @@ describe("CLI dispatch", () => {
     expect(status).toBe(0)
     expect(stdout).toContain("Usage: effect-lens <command>")
     expect(stdout).toContain("freshness")
+    expect(stdout).toContain("adoption")
   })
 
   it("prints the version for --version and exits 0", () => {

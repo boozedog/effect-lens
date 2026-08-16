@@ -1736,6 +1736,131 @@ The read-only setup plan model used by `setup --dry-run`.
 read-only: it never writes config, dependencies, packs, or hooks. See
 [`docs/setup.md`](setup.md) for the step semantics and supported hook managers.
 
+## `Adoption` — src/Adoption.ts
+
+The read-only staged-adoption audit model used by `adoption audit` (issue
+#14). It is the first phase of the staged Foldstryx adoption path: it inspects
+the target's Effect resolution, reference-pack state, oxlint configuration and
+scopes, active providers and rules, equivalent-rule overlaps, and the current
+unified-gate findings, and returns actionable migration recommendations. The
+audit is strictly read-only and offline.
+
+### `OxlintScopes`
+
+The detected oxlint configuration scopes, read verbatim and never rewritten.
+
+```json
+{
+  "configPath": ".oxlintrc.json | null",
+  "ignorePatterns": ["scripts/**"],
+  "overrides": [],
+  "rules": { "foldstryx/no-async-function": "error" }
+}
+```
+
+### `ProviderStatus`
+
+The status of a single rule provider in the audit.
+
+```json
+{
+  "provider": "foldstryx",
+  "title": "Foldstryx rules",
+  "active": true,
+  "rules": ["foldstryx/no-async-function"]
+}
+```
+
+`active` is true when the provider is loaded by the project's oxlint config (a
+matching `jsPlugins` entry or a configured rule). The Lens provider always
+reports its catalog rule ids so the audit shows the canonical rules available
+even when not configured.
+
+### `RuleOverlap`
+
+An equivalent-rule overlap between a first-party provider rule and the
+canonical Lens rule it duplicates, derived from the explicit
+`foldstryxEquivalences` mapping and the project's configured rules.
+
+```json
+{
+  "providerRule": "foldstryx/no-async-function",
+  "canonicalRule": "lens/no-async-function",
+  "rationale": "Foldstryx bans async functions; Lens enforces the same Effect-first rule."
+}
+```
+
+### `GateFindings`
+
+The current unified-gate findings for the audited project.
+
+```json
+{
+  "findings": [
+    { "rule": "lens/no-async-function", "provider": "lens", "severity": "error", "…": "…" }
+  ],
+  "migration": [
+    {
+      "providerRule": "foldstryx/no-async-function",
+      "canonicalRule": "lens/no-async-function",
+      "count": 1,
+      "recommendation": "…"
+    }
+  ],
+  "diagnostics": [],
+  "summary": { "total": 1, "errors": 1, "warnings": 0 },
+  "status": 2,
+  "error": null
+}
+```
+
+`findings` are the aggregated `Finding` values from a unified-mode review
+(encoded with the shared `Finding` contract, so optionals serialize to
+`null`/value); `migration` is the read-only migration report of redundant
+first-party rules; `diagnostics` are the non-rule diagnostics (including
+unrecognized project diagnostics and per-location migration notes); `summary`
+counts findings by severity; `status` is the aggregate exit status. When oxlint
+is unavailable, `error` carries the reason and the other fields are empty.
+
+### `Recommendation`
+
+An actionable migration recommendation.
+
+```json
+{
+  "kind": "migrate-overlap",
+  "message": "Migrate foldstryx/no-async-function to lens/no-async-function; Lens enforces the same rule with catalog evidence.",
+  "detail": "… | null"
+}
+```
+
+`kind` is one of `migrate-overlap`, `configure-lens`, `fetch-pack`, or
+`resolve-dependency`. Recommendations are advisory and never mutate config.
+
+### `AdoptionAudit`
+
+```json
+{
+  "project": "/abs/path",
+  "workspace": "packages/foldkit | null",
+  "resolution": { "…": "…" },
+  "pack": { "…": "…" },
+  "oxlint": { "…": "…" },
+  "oxlintScopes": { "…": "…" },
+  "providers": [],
+  "overlaps": [],
+  "gate": { "…": "…" },
+  "recommendations": [],
+  "diagnostics": []
+}
+```
+
+`resolution` and `pack` reuse the shared `Resolution` and
+`PackVerificationResult` contracts; `oxlint` reuses `OxlintStatus`. The audit
+is read-only and offline: it never mutates source, configs, packs,
+dependencies, or hooks, never removes Foldstryx rules, and never creates
+waivers. Freshness lookup is a separate network-backed surface (`freshness`).
+
 ## Invariants enforced by the schema
 
 - A `Finding` always has `rule`, `severity`, `source`, `location`, and at least

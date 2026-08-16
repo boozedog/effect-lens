@@ -6,6 +6,7 @@
  *
  * @since 0.0.0
  */
+export * as Adoption from "./Adoption.ts"
 export * as Drift from "./Drift.ts"
 export * as ExitStatus from "./ExitStatus.ts"
 export * as Finding from "./Finding.ts"

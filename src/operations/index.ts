@@ -1,6 +1,6 @@
 /**
  * Core operations: `lookup`, `review`, `design`, `statePressure`, `drift`,
- * `doctor`, `setup`, `setupApply`, `hooks`, and `hookMutation`.
+ * `doctor`, `setup`, `setupApply`, `hooks`, `hookMutation`, and `adoption`.
  *
  * These are the adapter-independent operations that CLI, pi, and future MCP
  * adapters consume. They centralize policy and analysis logic so no surface
@@ -11,6 +11,7 @@
  *
  * @since 0.0.0
  */
+export * as Adoption from "./adoption.ts"
 export * as Design from "./design.ts"
 export * as Doctor from "./doctor.ts"
 export * as Drift from "./drift.ts"

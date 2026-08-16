@@ -1,0 +1,10 @@
+{
+  "jsPlugins": ["./foldstryx-plugin.ts", "./stylex-plugin.ts"],
+  "rules": {
+    "foldstryx/no-async-function": "error",
+    "foldstryx/no-await-expression": "error",
+    "foldstryx/no-new-promise": "error",
+    "stylex/valid-styles": "warn"
+  },
+  "ignorePatterns": ["scripts/**"]
+}

@@ -1,15 +1,15 @@
 # Effect Lens CLI
 
 The `effect-lens` CLI is a thin adapter over the shared core
-operations. It exposes seven commands — `doctor`, `drift`, `check`, `setup`,
-`hooks`, `packs`, and `freshness` — that
+operations. It exposes eight commands — `doctor`, `drift`, `check`, `setup`,
+`hooks`, `packs`, `adoption`, and `freshness` — that
 inspect a project's Effect tooling and report findings and diagnostics with
 stable human-readable and machine-readable output and stable exit codes.
 
 The CLI never re-implements policy: every command delegates to the shared core
 operations in `src/operations/` and the shared contracts in `src/`. It never
 mutates project configuration. `doctor`, `drift`, `check`, `setup --dry-run`,
-`hooks status`, `packs plan`, `packs status`, and `freshness` are read-only;
+`hooks status`, `packs plan`, `packs status`, `adoption audit`, and `freshness` are read-only;
 `freshness` is the only network-backed command (it fetches an explicit registry
 snapshot); the rest never fetch packs or mutate caches. `setup --apply`,
 `hooks install|uninstall`, and `packs fetch` are the explicit mutation surfaces.
@@ -67,7 +67,7 @@ effect-lens doctor --project . --workspace packages/foldkit --cache ~/.cache/eff
 `--project` is always the repository root (the lockfile and configuration
 boundary). `--workspace` selects a package relative to that root and is used by
 the resolution-based commands (`doctor`, `drift`, `setup --dry-run`,
-`packs plan`, `packs status`, and `freshness`); `check` and `hooks` are unaffected because
+`packs plan`, `packs status`, `adoption audit`, and `freshness`); `check` and `hooks` are unaffected because
 they do not resolve the Effect dependency.
 
 Resolution precedence for the _expected_ Effect identity:
@@ -265,6 +265,60 @@ StyleX findings are surfaced with their raw oxlint severity (an `error` stays
 blocking, a `warning` stays advisory) and aggregate alongside Lens and Foldstryx
 findings in the unified gate.
 
+### `effect-lens adoption audit`
+
+Builds a read-only staged-adoption audit report for a selected project or
+workspace. It is the first phase of the staged Foldstryx adoption path (issue
+#14): it inspects the target's Effect resolution, reference-pack state, oxlint
+configuration and scopes, active Lens/Foldstryx/StyleX providers and rules,
+equivalent-rule overlaps, and the current unified-gate findings, and returns
+actionable migration recommendations.
+
+```sh
+effect-lens adoption audit --project . --workspace packages/foldkit --cache ~/.cache/effect-lens --json
+```
+
+`adoption audit` is a thin adapter over the shared-core `buildAdoptionAudit`
+operation. It runs oxlint in `unified` mode over the project (reusing the
+`check` oxlint runner) and passes the resulting diagnostics into the operation,
+which reports:
+
+- **Target identity** — the repository root (`--project`) and the selected
+  `--workspace` target (or `null`).
+- **Resolved Effect version** — the target's exact Effect identity from the
+  root lockfile (or `package.json` fallback).
+- **Reference-pack status** — `complete`, `stale`, `partial`, or `missing`
+  (via the shared `PackVerifier` contract).
+- **Oxlint config and scopes** — the detected config file, `ignorePatterns`,
+  `overrides`, and configured `rules`, read verbatim and never rewritten.
+- **Active providers and rules** — whether the Lens, Foldstryx, and StyleX
+  providers are loaded and which of their rules are configured.
+- **Equivalent-rule overlaps** — configured Foldstryx rules that have an
+  explicit Lens equivalent (from the `foldstryxEquivalences` mapping).
+- **Current unified-gate findings** — the aggregated findings and migration
+  report from a unified-mode review over the project.
+- **Migration recommendations** — actionable, advisory recommendations
+  (`migrate-overlap`, `configure-lens`, `fetch-pack`, `resolve-dependency`).
+
+The audit is strictly read-only and offline. It never mutates source, configs,
+packs, dependencies, or hooks, never removes Foldstryx rules, never creates
+waivers, and never fetches packs or the network. The unified-mode oxlint run
+writes a transient config that is removed in a `finally` block, exactly like
+`check`. Freshness lookup is a separate network-backed surface (`freshness`);
+the audit itself stays offline. If oxlint is unavailable, a warning diagnostic
+is emitted instead of crashing.
+
+The audit recommends canonical Lens migration for Foldstryx rules that have a
+Lens equivalent while preserving project-specific Foldstryx/StyleX rules that
+have no Lens equivalent. It never auto-removes Foldstryx rules or rewrites
+config; cleanup is a later staged slice.
+
+The `MachineOutput` carries the unified-gate findings (so generic consumers see
+them) and the audit's own diagnostics. The exit status reflects both: a
+blocking unified-gate error or a missing Effect dependency exits `2`, a
+warning (missing/stale pack, ambiguous config, unavailable oxlint) exits `1`,
+otherwise `0`.
+
 ### `effect-lens setup --dry-run`
 
 Builds a reviewable, ordered setup plan with no mutations. The plan inspects the
@@ -443,11 +497,11 @@ A missing candidate pack is reported as an actionable `catalog-missing` /
 ## Offline, read-only, and mutation behavior
 
 `doctor`, `drift`, `check`, `setup --dry-run`, `hooks status`, `packs plan`,
-`packs status`, and `freshness` are strictly read-only:
+`packs status`, `adoption audit`, and `freshness` are strictly read-only:
 
 - They never mutate package manifests, lockfiles, or any project configuration.
 - `doctor`, `drift`, `check`, `setup --dry-run`, `hooks status`, `packs plan`,
-  and `packs status` never fetch any network resource.
+  `packs status`, and `adoption audit` never fetch any network resource.
 - `freshness` is the only network-backed command: it fetches an explicit
   registry snapshot and never mutates anything. Offline commands remain
   offline; `freshness` requires network access to the registry and reports a
@@ -458,8 +512,8 @@ A missing candidate pack is reported as an actionable `catalog-missing` /
   artifact and never modifying the project's own config.
 - `setup --dry-run` and `hooks status` never write hook files, oxlint config,
   dependencies, or packs.
-- `packs plan`, `packs status`, and `freshness` never write, delete, or update
-  cache files.
+- `packs plan`, `packs status`, `adoption audit`, and `freshness` never write,
+  delete, or update cache files.
 
 `setup --apply`, `hooks install|uninstall`, and `packs fetch` are the explicit
 mutation surfaces. They require an explicit command/flag and never mutate

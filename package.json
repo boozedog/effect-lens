@@ -1,7 +1,7 @@
 {
   "name": "effect-lens",
   "version": "0.1.0",
-  "description": "An advisory CLI for Effect v4 TypeScript development: doctor, drift, check, setup, hooks, packs, and freshness.",
+  "description": "An advisory CLI for Effect v4 TypeScript development: doctor, drift, check, setup, hooks, packs, adoption, and freshness.",
   "license": "MIT",
   "repository": {
     "type": "git",

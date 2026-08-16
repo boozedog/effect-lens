@@ -85,7 +85,7 @@ const detectPackageManager = (projectDir: string, resolution: Resolution): strin
  *
  * @since 0.0.0
  */
-const oxlintStatus = (projectDir: string): OxlintStatus => {
+export const oxlintStatus = (projectDir: string): OxlintStatus => {
   const relName = [".oxlintrc.json", ".oxlintrc"]
     .find((name) => existsSync(join(projectDir, name))) ?? null
   if (relName === null) {

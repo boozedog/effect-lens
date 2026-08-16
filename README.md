@@ -3,8 +3,8 @@
 Effect Lens is an advisory tool for Effect v4 TypeScript development. It ships a
 CLI (`effect-lens doctor`, `effect-lens drift`, `effect-lens check`, `effect-lens
 setup --dry-run` / `setup --apply`, `effect-lens hooks status` / `install` /
-`uninstall`, `effect-lens packs status` / `packs plan` / `packs fetch`, and
-`effect-lens freshness`) that
+`uninstall`, `effect-lens packs status` / `packs plan` / `packs fetch`,
+`effect-lens adoption audit`, and `effect-lens freshness`) that
 inspects a project's Effect tooling, reports findings and
 diagnostics with stable human-readable and machine-readable output and stable
 exit codes, and sets up the `hk` hook-manager check explicitly. See
@@ -61,7 +61,7 @@ from this repository, or `effect-lens --help` from a checked-out project. See
 In a pnpm monorepo the lockfile lives at the repository root while Effect may
 be declared in a workspace package. Pass `--workspace <pkg>` (relative to
 `--project`) to the resolution-based commands (`doctor`, `drift`,
-`setup --dry-run`, `packs plan`, `packs status`, and `freshness`) to resolve that package's Effect version from
+`setup --dry-run`, `packs plan`, `packs status`, `adoption audit`, and `freshness`) to resolve that package's Effect version from
 the root lockfile and select the exact reference pack. The target may be the
 full importer path (`packages/foldkit`) or the final path segment (`foldkit`);
 an ambiguous basename and an unmatched target are reported as blocking errors.

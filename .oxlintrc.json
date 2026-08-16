@@ -19,6 +19,7 @@
     "test/fixtures/projects/check-unified/**",
     "test/fixtures/projects/check-foldstryx/**",
     "test/fixtures/projects/check-stylex/**",
+    "test/fixtures/projects/adoption-foldstryx/**",
     "**/*.tsbuildinfo"
   ],
   "overrides": [
