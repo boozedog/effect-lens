@@ -45,7 +45,7 @@ import { type CheckMode, DEFAULT_CHECK_MODE } from "../../provider/Provider.ts"
 import { resolveWorkspaceTarget } from "../../Resolver.ts"
 import { resolveChangedFiles } from "../changed.ts"
 import { encode } from "../encode.ts"
-import { runOxlint } from "../oxlint.ts"
+import { type OxlintSpawn, runOxlint } from "../oxlint.ts"
 import type { CliResult } from "../types.ts"
 
 /**
@@ -90,6 +90,7 @@ export const check = (args: {
   mode?: CheckMode
   workspace?: string | undefined
   changed?: boolean
+  spawn?: OxlintSpawn
 }): CliResult => {
   const mode = args.mode ?? DEFAULT_CHECK_MODE
   const scope = buildScope(args)
@@ -106,6 +107,7 @@ export const check = (args: {
       diagnostics: [],
       files: 0,
       error: null,
+      failure: null,
       mode,
       configSource: "none",
       configWarning: null
@@ -114,7 +116,8 @@ export const check = (args: {
     oxlint = runOxlint({
       projectDir: args.projectDir,
       targets: targetsOf(args.projectDir, scope),
-      mode
+      mode,
+      ...(args.spawn === undefined ? {} : { spawn: args.spawn })
     })
   }
   if (scope.kind === "project" && scope.error !== null) {
@@ -176,6 +179,7 @@ export const check = (args: {
       oxlint: {
         files: oxlint.files,
         error: oxlint.error,
+        failure: oxlint.failure,
         mode,
         changed: scope.kind === "changed",
         config: oxlint.configSource,

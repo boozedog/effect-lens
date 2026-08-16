@@ -35,6 +35,7 @@ import {
   makeProviderStatus,
   makeRecommendation,
   makeRuleOverlap,
+  type OxlintFailureInput,
   type OxlintScopes,
   type RecommendationKind
 } from "../Adoption.ts"
@@ -202,6 +203,7 @@ const buildGate = (gate: {
   diagnostics: Array<Review.OxlintDiagnostic>
   error: string | null
   configWarning?: string | null
+  failure?: OxlintFailureInput | null
 }): {
   findings: Array<import("../Finding.ts").Finding>
   migration: Array<import("../Adoption.ts").MigrationEntry>
@@ -210,6 +212,7 @@ const buildGate = (gate: {
   status: number
   error: string | null
   degraded: boolean
+  failure: OxlintFailureInput | null
 } => {
   if (gate.error !== null) {
     return {
@@ -219,7 +222,8 @@ const buildGate = (gate: {
       summary: makeGateSummary({ total: 0, errors: 0, warnings: 0 }),
       status: 0,
       error: gate.error,
-      degraded: false
+      degraded: false,
+      failure: gate.failure ?? null
     }
   }
   const review = Review.review({
@@ -258,7 +262,8 @@ const buildGate = (gate: {
     }),
     status: review.status,
     error: null,
-    degraded
+    degraded,
+    failure: null
   }
 }
 
@@ -437,6 +442,7 @@ export const buildAdoptionAudit = (args: {
     diagnostics: Array<Review.OxlintDiagnostic>
     error: string | null
     configWarning?: string | null
+    failure?: OxlintFailureInput | null
   }
 }): AdoptionAudit => {
   const resolution = Resolver.resolveEffectIdentity(args.projectDir, {

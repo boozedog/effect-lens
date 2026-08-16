@@ -15,7 +15,7 @@
  * @since 0.0.0
  */
 import * as Option from "effect/Option"
-import { spawnSync } from "node:child_process"
+import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process"
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
@@ -101,10 +101,170 @@ const transientConfigName = (): string =>
  */
 export type ConfigSource = "builtin" | "project" | "none"
 
+/** SpawnSync options used for the oxlint invocation and binary probe. */
+const SPAWN_OPTS: SpawnSyncOptionsWithStringEncoding = {
+  encoding: "utf8",
+  maxBuffer: 64 * 1024 * 1024
+}
+
+/**
+ * The bounded, deterministic classes of oxlint subprocess failure that a
+ * config/plugin/tool failure can surface as. A normal lint run that produces
+ * valid JSON diagnostics and exits non-zero is NOT one of these — its
+ * diagnostics remain gate findings. These represent real tool/config trouble:
+ * the binary could not run, produced no JSON, or produced unparseable output.
+ *
+ * @since 0.1.0
+ */
+export type OxlintFailureKind =
+  | "no-binary"
+  | "config-write"
+  | "startup"
+  | "empty-output"
+  | "unparseable"
+
+/**
+ * Bounded failure metadata for an oxlint run that did not complete normally.
+ *
+ * `message` is a concise human-readable summary (it also feeds the `error`
+ * string). `status` is the subprocess exit code and `signal` the terminating
+ * signal when the run spawned; both are `null` for pre-spawn failures (no
+ * binary, config write). `stderr`/`stdout` are bounded excerpts of the
+ * subprocess output (never the full buffer) so a config/plugin failure is
+ * actionable without dumping unbounded output into a diagnostic or JSON.
+ *
+ * @since 0.1.0
+ */
+export interface OxlintFailure {
+  readonly kind: OxlintFailureKind
+  readonly message: string
+  readonly status: number | null
+  readonly signal: string | null
+  readonly stderr: string | null
+  readonly stdout: string | null
+}
+
+/**
+ * The raw result of a single oxlint subprocess invocation, mirroring the
+ * relevant fields of `spawnSync`'s return value so a deterministic test
+ * runner can substitute for a real spawn.
+ *
+ * @since 0.1.0
+ */
+export interface OxlintSpawnResult {
+  readonly status: number | null
+  readonly signal: string | null
+  readonly stdout: string
+  readonly stderr: string
+  readonly error?: Error | undefined
+}
+
+/**
+ * The spawn seam used by {@link runOxlint}. A test harness injects a
+ * deterministic fake so failure cases are exercised without a real binary or
+ * network.
+ *
+ * @since 0.1.0
+ */
+export type OxlintSpawn = (spawn: {
+  bin: string
+  argv: ReadonlyArray<string>
+}) => OxlintSpawnResult
+
+/**
+ * The production spawn runner: shells out to the resolved oxlint binary with
+ * `spawnSync`. This is the default {@link OxlintSpawn}.
+ *
+ * @since 0.1.0
+ */
+const spawnSyncRunner: OxlintSpawn = ({ bin, argv }) => {
+  const result = spawnSync(bin, [...argv], SPAWN_OPTS)
+  return {
+    status: result.status,
+    signal: result.signal === null ? null : String(result.signal),
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    error: result.error
+  }
+}
+
+/**
+ * The maximum length of a captured subprocess output excerpt in failure
+ * metadata and human messages. A chatty oxlint cannot bloat a diagnostic or
+ * the JSON payload; anything longer is truncated with an explicit marker.
+ *
+ * @since 0.1.0
+ */
+const MAX_CAPTURED = 1000
+
+/**
+ * Trims and bounds a captured subprocess output excerpt to
+ * {@link MAX_CAPTURED} characters, appending a `[…]` marker when truncation
+ * happened so a reader knows the excerpt is not the full buffer.
+ *
+ * @since 0.1.0
+ */
+const boundedCapture = (raw: string): string => {
+  const text = raw.trim()
+  if (text.length <= MAX_CAPTURED) return text
+  return `${text.slice(0, MAX_CAPTURED)}\n… [${
+    text.length - MAX_CAPTURED
+  } more characters truncated]`
+}
+
+/**
+ * A short, deterministic description of how a spawn ended: `exit <n>`,
+ * `killed by <signal>`, `did not start`, or `status unknown`.
+ *
+ * @since 0.1.0
+ */
+const exitNote = (r: OxlintSpawnResult): string => {
+  if (r.error !== undefined) return "did not start"
+  if (r.signal !== null) return `killed by ${r.signal}`
+  return r.status === null ? "status unknown" : `exit ${r.status}`
+}
+
+/**
+ * The bounded subprocess output excerpt to embed in a human failure message.
+ *
+ * Oxlint 1.78 prints plugin/config load failures to stdout and leaves stderr
+ * empty, so a stderr-only excerpt would hide the actual cause (issue #17 item
+ * 4). Prefer the bounded stderr excerpt when present, otherwise the bounded
+ * stdout excerpt. Either way the excerpt is capped by {@link boundedCapture}.
+ *
+ * @since 0.1.0
+ */
+const capturedNote = (r: OxlintSpawnResult): string => {
+  const stderr = boundedCapture(r.stderr ?? "")
+  if (stderr !== "") return stderr
+  return boundedCapture(r.stdout ?? "")
+}
+
+/**
+ * Builds an {@link OxlintFailure} value from a spawn result (or `null` when
+ * the failure happened before a subprocess was launched).
+ *
+ * @since 0.1.0
+ */
+const oxlintFailure = (args: {
+  kind: OxlintFailureKind
+  message: string
+  result: OxlintSpawnResult | null
+}): OxlintFailure => ({
+  kind: args.kind,
+  message: args.message,
+  status: args.result?.status ?? null,
+  signal: args.result?.signal ?? null,
+  stderr: args.result ? boundedCapture(args.result.stderr ?? "") : null,
+  stdout: args.result ? boundedCapture(args.result.stdout ?? "") : null
+})
+
 /**
  * The result of an oxlint run: the parsed diagnostics, the number of files
- * linted, the gate mode, the config source, and an error string when oxlint
- * could not run.
+ * linted, the gate mode, the config source, a human-facing `error` string, a
+ * bounded `failure` descriptor when oxlint could not complete normally, and a
+ * config warning when the project config could not be parsed and the run fell
+ * back to the built-in config.
  *
  * @since 0.0.0
  */
@@ -112,6 +272,7 @@ export interface OxlintRun {
   readonly diagnostics: Array<Review.OxlintDiagnostic>
   readonly files: number
   readonly error: string | null
+  readonly failure: OxlintFailure | null
   readonly mode: CheckMode
   readonly configSource: ConfigSource
   readonly configWarning: string | null
@@ -315,14 +476,18 @@ export const runOxlint = (args: {
   projectDir: string
   targets: ReadonlyArray<string>
   mode?: CheckMode
+  spawn?: OxlintSpawn
 }): OxlintRun => {
   const mode = args.mode ?? DEFAULT_CHECK_MODE
+  const run = args.spawn ?? spawnSyncRunner
   const oxlintBin = resolveOxlintBin(args.projectDir)
   if (oxlintBin === null) {
+    const message = "oxlint binary not found; install oxlint to run check"
     return {
       diagnostics: [],
       files: 0,
-      error: "oxlint binary not found; install oxlint to run check",
+      error: message,
+      failure: oxlintFailure({ kind: "no-binary", message, result: null }),
       mode,
       configSource: "none",
       configWarning: null
@@ -336,6 +501,11 @@ export const runOxlint = (args: {
       diagnostics: [],
       files: 0,
       error: prepared.error,
+      failure: oxlintFailure({
+        kind: "config-write",
+        message: prepared.error,
+        result: null
+      }),
       mode,
       configSource: "none",
       configWarning: null
@@ -343,30 +513,34 @@ export const runOxlint = (args: {
   }
   const { configPath, configSource, projectConfigPath, warning } = prepared
   try {
-    const result = spawnSync(
-      oxlintBin,
-      ["-c", configPath, "--format", "json", ...buildIgnorePatterns(), ...args.targets],
-      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }
-    )
+    const result = run({
+      bin: oxlintBin,
+      argv: ["-c", configPath, "--format", "json", ...buildIgnorePatterns(), ...args.targets]
+    })
     if (result.error !== undefined) {
+      const message = `oxlint failed to start: ${result.error.message}`
       return {
         diagnostics: [],
         files: 0,
-        error: `oxlint failed to start: ${result.error.message}`,
+        error: message,
+        failure: oxlintFailure({ kind: "startup", message, result }),
         mode,
         configSource,
         configWarning: warning
       }
     }
-    const stderrNote = result.stderr.trim() === "" ? "" : ` (${result.stderr.trim()})`
     // oxlint may prefix a human line (e.g. "No files found to lint...") before
     // the JSON object; extract the first `{` so parsing is robust.
     const jsonStart = result.stdout.indexOf("{")
     if (jsonStart === -1) {
+      const note = capturedNote(result)
+      const message = `oxlint produced no JSON output (${exitNote(result)})` +
+        (note === "" ? "" : `: ${note}`)
       return {
         diagnostics: [],
         files: 0,
-        error: `oxlint produced no JSON output${stderrNote}`,
+        error: message,
+        failure: oxlintFailure({ kind: "empty-output", message, result }),
         mode,
         configSource,
         configWarning: warning
@@ -376,21 +550,49 @@ export const runOxlint = (args: {
     try {
       parsed = JSON.parse(result.stdout.slice(jsonStart))
     } catch {
+      const note = capturedNote(result)
+      const message = `oxlint produced unparseable output (${exitNote(result)})` +
+        (note === "" ? "" : `: ${note}`)
       return {
         diagnostics: [],
         files: 0,
-        error: `oxlint produced unparseable output${stderrNote}`,
+        error: message,
+        failure: oxlintFailure({ kind: "unparseable", message, result }),
         mode,
         configSource,
         configWarning: warning
       }
     }
-    const data = parsed as { diagnostics?: Array<unknown>; number_of_files?: unknown }
+    const data = parsed as { diagnostics?: unknown; number_of_files?: unknown }
+    // A present-but-non-array `diagnostics` value is malformed output, not a
+    // normal empty lint run: surface it as an unparseable failure instead of
+    // throwing `map is not a function` or silently reporting a clean gate.
+    if (data.diagnostics !== undefined && !Array.isArray(data.diagnostics)) {
+      const message = `oxlint produced unparseable output (${exitNote(result)}): ` +
+        "diagnostics is not an array"
+      return {
+        diagnostics: [],
+        files: 0,
+        error: message,
+        failure: oxlintFailure({ kind: "unparseable", message, result }),
+        mode,
+        configSource,
+        configWarning: warning
+      }
+    }
     const diagnostics = (data.diagnostics ?? [])
       .map((d) => decodeDiagnostic(d))
       .filter((d): d is Review.OxlintDiagnostic => d !== null)
     const files = typeof data.number_of_files === "number" ? data.number_of_files : 0
-    return { diagnostics, files, error: null, mode, configSource, configWarning: warning }
+    return {
+      diagnostics,
+      files,
+      error: null,
+      failure: null,
+      mode,
+      configSource,
+      configWarning: warning
+    }
   } finally {
     rmSync(scratchDir, { recursive: true, force: true })
     if (projectConfigPath !== null) rmSync(projectConfigPath, { force: true })

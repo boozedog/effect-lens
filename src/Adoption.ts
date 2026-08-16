@@ -58,6 +58,85 @@ export const makeOxlintScopes = (args: {
   })
 
 /**
+ * Bounded, deterministic metadata describing an oxlint unified-gate failure
+ * (configuration/plugin/tool trouble) so the gate is visibly unavailable
+ * rather than an empty clean result.
+ *
+ * `kind` is one of the stable failure classes, `message` a concise
+ * human-readable summary, `status` the subprocess exit code, `signal` the
+ * terminating signal (both `null` for pre-spawn failures), and `stderr`/
+ * `stdout` bounded excerpts (never the full buffer). A normal lint run that
+ * produced valid JSON diagnostics and exited non-zero is not a failure: it
+ * keeps its findings and `failure` is absent.
+ *
+ * @since 0.1.0
+ */
+export class OxlintFailure extends Schema.Class<OxlintFailure>("OxlintFailure")({
+  kind: Schema.Literals([
+    "no-binary",
+    "config-write",
+    "startup",
+    "empty-output",
+    "unparseable"
+  ]),
+  message: Schema.String,
+  status: Schema.OptionFromNullOr(Schema.Number),
+  signal: Schema.OptionFromNullOr(Schema.String),
+  stderr: Schema.OptionFromNullOr(Schema.String),
+  stdout: Schema.OptionFromNullOr(Schema.String)
+}) {}
+
+/**
+ * The stable, JSON-friendly kind of an oxlint gate failure.
+ *
+ * @since 0.1.0
+ */
+export type OxlintFailureKind =
+  | "no-binary"
+  | "config-write"
+  | "startup"
+  | "empty-output"
+  | "unparseable"
+
+/**
+ * The plain, JSON-friendly shape of an oxlint failure passed by adapters
+ * (the CLI oxlint runner). It mirrors {@link OxlintFailure}'s fields before
+ * Option-wrapping; the gate converts it with {@link makeOxlintFailure}.
+ *
+ * @since 0.1.0
+ */
+export interface OxlintFailureInput {
+  readonly kind: OxlintFailureKind
+  readonly message: string
+  readonly status: number | null
+  readonly signal: string | null
+  readonly stderr: string | null
+  readonly stdout: string | null
+}
+
+/**
+ * Builds an {@link OxlintFailure} value from a plain descriptor.
+ *
+ * @since 0.1.0
+ */
+export const makeOxlintFailure = (args: {
+  kind: "no-binary" | "config-write" | "startup" | "empty-output" | "unparseable"
+  message: string
+  status?: number | null
+  signal?: string | null
+  stderr?: string | null
+  stdout?: string | null
+}): OxlintFailure =>
+  new OxlintFailure({
+    kind: args.kind,
+    message: args.message,
+    status: Option.fromNullishOr(args.status),
+    signal: Option.fromNullishOr(args.signal),
+    stderr: Option.fromNullishOr(args.stderr),
+    stdout: Option.fromNullishOr(args.stdout)
+  })
+
+/**
  * The status of a single rule provider in the audit.
  *
  * `provider` is the stable provider identity (`lens`, `foldstryx`, or
@@ -211,7 +290,8 @@ export class GateFindings extends Schema.Class<GateFindings>("GateFindings")({
   summary: GateSummary,
   status: Schema.Number,
   error: Schema.OptionFromNullOr(Schema.String),
-  degraded: Schema.Boolean
+  degraded: Schema.Boolean,
+  failure: Schema.OptionFromNullOr(OxlintFailure)
 }) {}
 
 /**
@@ -227,6 +307,7 @@ export const makeGateFindings = (args: {
   status: number
   error?: string | null
   degraded?: boolean
+  failure?: OxlintFailureInput | null
 }): GateFindings =>
   new GateFindings({
     findings: args.findings,
@@ -235,7 +316,10 @@ export const makeGateFindings = (args: {
     summary: args.summary,
     status: args.status,
     error: Option.fromNullishOr(args.error),
-    degraded: args.degraded ?? false
+    degraded: args.degraded ?? false,
+    failure: args.failure === undefined || args.failure === null
+      ? Option.none()
+      : Option.some(makeOxlintFailure(args.failure))
   })
 
 /**

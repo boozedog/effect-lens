@@ -62,7 +62,8 @@ export const adoptionAudit = (context: CliContext): CliResult => {
     gate: {
       diagnostics: oxlint.diagnostics,
       error: oxlint.error,
-      configWarning: oxlint.configWarning
+      configWarning: oxlint.configWarning,
+      failure: oxlint.failure
     }
   })
   const machineOutput = makeMachineOutput({

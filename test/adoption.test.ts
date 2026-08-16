@@ -213,7 +213,49 @@ describe("buildAdoptionAudit (operation)", () => {
       gate: { diagnostics: [], error: "oxlint binary not found" }
     })
     expect(Option.getOrNull(audit.gate.error)).toBe("oxlint binary not found")
+    expect(Option.isNone(audit.gate.failure)).toBe(true)
     expect(audit.diagnostics.some((d) => d.id === "adoption-gate-unavailable")).toBe(true)
+  })
+
+  it("preserves bounded failure metadata in the gate when oxlint is unavailable", () => {
+    const audit = Adoption.buildAdoptionAudit({
+      projectDir: adoptionFixture,
+      cacheDir: cacheMonoDir,
+      workspace: "packages/foldkit",
+      gate: {
+        diagnostics: [],
+        error: "oxlint produced no JSON output (exit 2): failed to load plugin /x/plugin.ts",
+        failure: {
+          kind: "empty-output",
+          message: "oxlint produced no JSON output (exit 2): failed to load plugin /x/plugin.ts",
+          status: 2,
+          signal: null,
+          stderr: "failed to load plugin /x/plugin.ts",
+          stdout: ""
+        }
+      }
+    })
+    const failure = Option.getOrNull(audit.gate.failure)
+    expect(failure?.kind).toBe("empty-output")
+    expect(Option.getOrNull(failure?.status ?? Option.none())).toBe(2)
+    expect(Option.getOrNull(failure?.signal ?? Option.none())).toBeNull()
+    expect(Option.getOrNull(failure?.stderr ?? Option.none())).toContain("failed to load plugin")
+    expect(Option.getOrNull(audit.gate.error)).toContain("exit 2")
+    // The unavailable gate is never an empty clean result: a warning
+    // diagnostic drives the audit exit status.
+    expect(audit.diagnostics.some((d) => d.id === "adoption-gate-unavailable")).toBe(true)
+    expect(audit.gate.findings).toHaveLength(0)
+  })
+
+  it("keeps valid gate diagnostics as findings with no failure metadata", () => {
+    const audit = Adoption.buildAdoptionAudit({
+      projectDir: adoptionFixture,
+      cacheDir: cacheMonoDir,
+      workspace: "packages/foldkit",
+      gate: { diagnostics: [], error: null }
+    })
+    expect(Option.isNone(audit.gate.failure)).toBe(true)
+    expect(Option.getOrNull(audit.gate.error)).toBeNull()
   })
 
   it("normalizes a valid JSON null oxlint config to ambiguous without crashing", () => {

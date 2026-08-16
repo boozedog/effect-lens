@@ -1826,7 +1826,8 @@ The current unified-gate findings for the audited project.
   "summary": { "total": 1, "errors": 1, "warnings": 0 },
   "status": 2,
   "error": null,
-  "degraded": false
+  "degraded": false,
+  "failure": null
 }
 ```
 
@@ -1836,10 +1837,42 @@ The current unified-gate findings for the audited project.
 first-party rules; `diagnostics` are the non-rule diagnostics (including
 unrecognized project diagnostics and per-location migration notes); `summary`
 counts findings by severity; `status` is the aggregate exit status. When oxlint
-is unavailable, `error` carries the reason and the other fields are empty. When
-the project's oxlint config could not be parsed and oxlint fell back to the
+is unavailable, `error` carries the reason, `failure` carries the bounded
+subprocess metadata, and the other fields are empty. When the project's
+oxlint config could not be parsed and oxlint fell back to the
 built-in config, `degraded` is `true` so the findings are not mistaken for the
 project's own policy.
+
+### `OxlintFailure`
+
+Bounded, deterministic metadata describing an oxlint unified-gate failure
+(configuration/plugin/tool trouble) so the gate is visibly unavailable rather
+than an empty clean result. It is present only when the subprocess failed to
+start, produced no JSON output, or produced unparseable output — never for a
+normal lint run with valid JSON diagnostics, even one that exits non-zero.
+
+```json
+{
+  "kind": "empty-output | no-binary | config-write | startup | unparseable",
+  "message": "oxlint produced no JSON output (exit 1): Failed to load JS plugin: ./missing-plugin.ts …",
+  "status": 1,
+  "signal": null,
+  "stderr": "",
+  "stdout": "Failed to load JS plugin: ./missing-plugin.ts\nCannot find module …"
+}
+```
+
+`kind` is the stable failure class. `message` is a concise human-readable
+summary that also feeds the gate `error` string and the
+`adoption-gate-unavailable` / `check-oxlint-unavailable` diagnostics. `status`
+is the subprocess exit code and `signal` the terminating signal; both are
+`null` for pre-spawn failures (no binary, config write). `stderr`/`stdout` are
+bounded excerpts (capped, with a truncation marker) so a config/plugin failure
+is actionable without dumping unbounded subprocess output. Post-spawn captures
+are `""` when a stream is empty (`null` is reserved for pre-spawn failures).
+The human `message` embeds the bounded stderr excerpt when present, otherwise
+the bounded stdout excerpt — oxlint 1.78 prints plugin/config load failures to
+stdout with empty stderr, so a stderr-only message would hide the cause.
 
 ### `Recommendation`
 

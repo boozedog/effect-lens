@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest"
 import * as DateTime from "effect/DateTime"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
+import * as Adoption from "../src/Adoption.ts"
 import * as Drift from "../src/Drift.ts"
 import * as ExitStatus from "../src/ExitStatus.ts"
 import * as Finding from "../src/Finding.ts"
@@ -72,5 +73,42 @@ describe("True JSON round-trips", () => {
     const decoded = jsonRoundTrip(ExitStatus.MachineOutput, output)
     expect(Option.getOrNull(decoded.findings[0].waivers[0].expiresAt)?.toJSON())
       .toBe("2026-09-01T00:00:00.000Z")
+  })
+
+  it("GateFindings with an oxlint failure metadata round-trips", () => {
+    const gate = Adoption.makeGateFindings({
+      findings: [
+        Finding.makeFinding({
+          id: "f-1",
+          rule: "lens/no-async-function",
+          provider: "lens",
+          severity: "error",
+          source: "lens-strict",
+          message: "Prefer Effect composition.",
+          location: Finding.makeLocation({ file: "src/a.ts", line: 1 }),
+          evidence: [Provenance.makeEvidence({ source: "LLMS.md" })]
+        })
+      ],
+      migration: [],
+      diagnostics: [],
+      summary: Adoption.makeGateSummary({ total: 1, errors: 1, warnings: 0 }),
+      status: 2,
+      error: null,
+      degraded: false,
+      failure: {
+        kind: "empty-output",
+        message: "oxlint produced no JSON output (exit 1): Failed to load JS plugin",
+        status: 1,
+        signal: null,
+        stderr: "",
+        stdout: "Failed to load JS plugin: ./missing-plugin.ts\nCannot find module"
+      }
+    })
+    const decoded = jsonRoundTrip(Adoption.GateFindings, gate)
+    const failure = Option.getOrNull(decoded.failure)
+    expect(failure?.kind).toBe("empty-output")
+    expect(Option.getOrNull(failure?.status ?? Option.none())).toBe(1)
+    expect(Option.getOrNull(failure?.signal ?? Option.none())).toBeNull()
+    expect(Option.getOrNull(failure?.stdout ?? Option.none())).toContain("Cannot find module")
   })
 })

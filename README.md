@@ -129,8 +129,12 @@ ignores, overrides, and rule settings — while loading the Lens rules, and
 surfaces unknown project diagnostics with their raw oxlint severity). During migration,
 equivalent Lens and Foldstryx diagnostics at the same rule/location collapse
 to a single finding, and a read-only migration report recommends the Lens
-equivalent for each redundant Foldstryx rule. See `docs/cli.md` for the modes,
-configuration precedence, and migration behavior.
+equivalent for each redundant Foldstryx rule. When the oxlint subprocess fails
+to start, produces no JSON, or produces unparseable output (config/plugin
+failures), the run is reported as unavailable — never as an empty clean gate —
+with the exit status, signal, and a bounded stderr excerpt preserved; a run
+with valid JSON diagnostics is a normal gate even when it exits non-zero. See
+`docs/cli.md` for the modes, configuration precedence, and migration behavior.
 
 The StyleX provider recognizes the supported official `@stylexjs/eslint-plugin`
 rule catalog and keeps StyleX findings with `provider: "stylex"` provenance and

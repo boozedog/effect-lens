@@ -160,6 +160,20 @@ the resulting findings. `--path` is resolved relative to `--project` and
 defaults to the project directory. If oxlint is unavailable or fails, a warning
 diagnostic is emitted instead of crashing.
 
+When the oxlint subprocess fails to start, produces no JSON output, or produces
+unparseable output (the common signature of a config/plugin load failure), the
+run is reported as unavailable rather than as a clean or empty gate: a
+`check-oxlint-unavailable` warning diagnostic carries a bounded excerpt of the
+real oxlint output (stderr when present, otherwise stdout — oxlint 1.78 prints
+plugin/config load failures to stdout with empty stderr) plus the subprocess
+exit status or terminating signal, and
+the machine `oxlint.failure` block exposes the structured metadata (`kind`,
+`message`, `status`, `signal`, bounded `stderr`/`stdout`). The excerpts are
+capped so a chatty oxlint cannot bloat a diagnostic or payload. A lint run
+that produces valid JSON diagnostics is a normal gate result even when oxlint
+exits non-zero: the diagnostics keep flowing through the providers and
+determine findings/status, and `oxlint.failure` is absent.
+
 #### Gate modes
 
 `check` supports two gate modes, selected with `--mode`:
@@ -386,7 +400,12 @@ waivers, and never fetches packs or the network. The unified-mode oxlint run
 writes a transient config that is removed in a `finally` block, exactly like
 `check`. Freshness lookup is a separate network-backed surface (`freshness`);
 the audit itself stays offline. If oxlint is unavailable, a warning diagnostic
-is emitted instead of crashing.
+(`adoption-gate-unavailable`) is emitted instead of crashing: the gate's
+`error` string carries the bounded oxlint output excerpt (stderr, or stdout
+when stderr is empty) and the subprocess exit status or terminating signal,
+and the gate's `failure` field exposes the structured metadata. A valid
+unified-mode run with JSON diagnostics — even one that exits non-zero — keeps
+its findings.
 
 The audit recommends canonical Lens migration for Foldstryx rules that have a
 Lens equivalent while preserving project-specific Foldstryx/StyleX rules that
