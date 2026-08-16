@@ -59,6 +59,7 @@
     "policy": "node --experimental-strip-types scripts/policy.mjs",
     "pm-guard": "node scripts/package-manager-guard.mjs",
     "pack:check": "node --experimental-strip-types scripts/package-check.mjs",
+    "release": "node scripts/release.mjs",
     "release:check": "nub run verify"
   },
   "devEngines": {
