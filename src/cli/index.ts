@@ -160,7 +160,8 @@ const main = (): void => {
   const context: CliContext = {
     projectDir,
     cacheDir,
-    workspace: values.workspace
+    workspace: values.workspace,
+    command: process.env.EFFECT_LENS_COMMAND ?? "effect-lens"
   }
 
   let result: CliResult
@@ -207,7 +208,12 @@ const main = (): void => {
       if (values["dry-run"] === true) {
         result = setup(context)
       } else if (values.apply === true) {
-        result = setupApply({ projectDir, cacheDir, workspace: context.workspace })
+        result = setupApply({
+          projectDir,
+          cacheDir,
+          workspace: context.workspace,
+          command: context.command
+        })
       } else {
         process.stderr.write(
           `error: setup requires an explicit mode: --dry-run (read-only) or ` +
@@ -219,7 +225,12 @@ const main = (): void => {
       break
     case "hooks":
       if (positionals[1] === "install") {
-        result = hooksInstall({ projectDir, cacheDir })
+        result = hooksInstall({
+          projectDir,
+          cacheDir,
+          workspace: context.workspace,
+          command: context.command
+        })
       } else if (positionals[1] === "uninstall") {
         result = hooksUninstall({ projectDir, cacheDir })
       } else if (positionals[1] === "status") {

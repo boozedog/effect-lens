@@ -25,6 +25,7 @@
  *
  * @since 0.0.0
  */
+import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { HookMutationResult, HookOperation, makeHookMutationResult } from "../HookMutation.ts"
@@ -60,12 +61,80 @@ const START_MARKER = "// === effect-lens:start ==="
 const END_MARKER = "// === effect-lens:end ==="
 
 /**
- * The name of the Lens-owned hk step and the check command it runs.
+ * The name of the Lens-owned hk step.
  *
  * @since 0.0.0
  */
 const LENS_STEP = "effect-lens"
-const LENS_COMMAND = "effect-lens check"
+
+/**
+ * The check flags the generated hk step runs. The step is a scoped,
+ * changed-file gate: `--mode unified` preserves the repository's oxlint
+ * config (ignores, overrides, rule settings) while loading the Lens rules,
+ * and `--changed` lints only the staged changed files so a pre-commit hook
+ * checks exactly what is about to be committed.
+ *
+ * @since 0.0.0
+ */
+const LENS_COMMAND_BASE = "check --mode unified --changed"
+
+/**
+ * Escapes a value for embedding inside a Pkl double-quoted string. Pkl strings
+ * use `\` and `"` as the only escapes Lens needs to guard against. Applied to
+ * the full generated command (which may contain shell-quoted values with
+ * embedded quotes or backslashes) so the `check` string stays well-formed.
+ *
+ * @since 0.0.0
+ */
+const pklEscape = (value: string): string => value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")
+
+/**
+ * Shell-quotes a value for safe embedding in a command that hk runs via a
+ * shell (`sh -c`). Wraps the value in single quotes and escapes any embedded
+ * single quote, so a workspace target or command path containing spaces or
+ * shell metacharacters is passed as a single literal argument rather than
+ * being split or interpreted. The result is then Pkl-escaped when embedded in
+ * the `check` string.
+ *
+ * @since 0.0.0
+ */
+const shellQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
+
+/**
+ * Builds the scoped check command the generated hk step runs.
+ *
+ * The base command is `effect-lens` (or the injected `command` seam used by
+ * tests). The step always runs the unified changed-file gate. When a workspace
+ * is explicitly selected, the target is passed through `--workspace` so the
+ * hook lints only the selected workspace's staged files; with no workspace
+ * the hook operates over all staged paths under the root config. The binary
+ * and workspace values are shell-quoted so the command stays well-formed and
+ * non-injective when hk runs it via a shell.
+ *
+ * @since 0.0.0
+ */
+const buildLensCommand = (command: string, workspace?: string | undefined): string => {
+  const base = `${shellQuote(command)} ${LENS_COMMAND_BASE}`
+  if (workspace !== undefined && workspace !== "") {
+    return `${base} --workspace ${shellQuote(workspace)}`
+  }
+  return base
+}
+
+/**
+ * True when the `effect-lens` command is available on PATH.
+ *
+ * Runs `<command> --version` and treats a clean exit as available. A missing
+ * executable (spawn error) or a non-zero exit is unavailable. This is the
+ * precondition that guarantees a generated hk step can actually run; it is
+ * checked before any file is written.
+ *
+ * @since 0.0.0
+ */
+const commandAvailable = (command: string): boolean => {
+  const result = spawnSync(command, ["--version"], { encoding: "utf8" })
+  return result.error === undefined && result.status === 0
+}
 
 /**
  * Reads a file's text, or `null` when the path is absent or unreadable.
@@ -225,14 +294,15 @@ const findStepsTarget = (lines: Array<string>): StepsTarget => {
 }
 
 /**
- * Builds the Lens-owned Pkl step block, each line prefixed with `indent`.
+ * Builds the Lens-owned Pkl step block, each line prefixed with `indent`. The
+ * step's `check` runs the scoped unified changed-file command.
  *
  * @since 0.0.0
  */
-const lensBlock = (indent: string): Array<string> => [
+const lensBlock = (indent: string, command: string): Array<string> => [
   `${indent}${START_MARKER}`,
   `${indent}["${LENS_STEP}"] {`,
-  `${indent}  check = "${LENS_COMMAND}"`,
+  `${indent}  check = "${pklEscape(command)}"`,
   `${indent}}`,
   `${indent}${END_MARKER}`
 ]
@@ -288,7 +358,11 @@ const refusedMalformed = (operation: HookOperation): HookMutationResult =>
  *
  * @since 0.0.0
  */
-const installHk = (projectDir: string, relName: string): HookMutationResult => {
+const installHk = (
+  projectDir: string,
+  relName: string,
+  command: string
+): HookMutationResult => {
   const file = join(projectDir, relName)
   const content = readText(file)
   if (content === null) {
@@ -338,7 +412,7 @@ const installHk = (projectDir: string, relName: string): HookMutationResult => {
   }
   if (target.kind === "inline") {
     const indent = `${indentOf(lines[target.closeLine] as string)}  `
-    lines.splice(target.closeLine, 0, ...lensBlock(indent))
+    lines.splice(target.closeLine, 0, ...lensBlock(indent, command))
   } else {
     const base = indentOf(lines[target.line] as string)
     const stepIndent = `${base}  `
@@ -347,7 +421,7 @@ const installHk = (projectDir: string, relName: string): HookMutationResult => {
       1,
       `${base}steps {`,
       `${stepIndent}...${target.assignee}`,
-      ...lensBlock(stepIndent),
+      ...lensBlock(stepIndent, command),
       `${base}}`
     )
   }
@@ -458,8 +532,11 @@ const refused = (
 export const applyHookMutation = (args: {
   projectDir: string
   operation: HookOperation
+  workspace?: string | undefined
+  command?: string | undefined
 }): HookMutationResult => {
   const { projectDir, operation } = args
+  const command = args.command ?? "effect-lens"
   const status = hooksStatus(projectDir)
   const hk = status.managers.find((m) => m.manager === "hk") ?? null
   const relName = findHkConfig(projectDir)
@@ -505,7 +582,15 @@ export const applyHookMutation = (args: {
         "hooks-install-hk-not-owned"
       )
     }
-    return installHk(projectDir, relName)
+    if (!commandAvailable(command)) {
+      return refused(
+        operation,
+        `cannot install hooks: the "${command}" command is not available on PATH; ` +
+          "install effect-lens (e.g. `npm install -g effect-lens`) before installing hooks",
+        "hooks-install-hk-command-unavailable"
+      )
+    }
+    return installHk(projectDir, relName, buildLensCommand(command, args.workspace))
   }
 
   // uninstall

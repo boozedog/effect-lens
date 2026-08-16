@@ -10,16 +10,48 @@
  */
 import { describe, expect, it } from "@effect/vitest"
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const ENTRY = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url))
 
-const runCli = (args: Array<string>): { stdout: string; stderr: string; status: number } => {
+/**
+ * A fake `effect-lens` executable placed on PATH so the CLI's command-
+ * availability precondition passes without depending on the real binary or a
+ * built `dist/`. The generated hk step embeds the literal `effect-lens` name
+ * (the default command), so CLI tests assert the realistic command text.
+ *
+ * @since 0.0.0
+ */
+let fakeBinEnv: NodeJS.ProcessEnv | null = null
+const binEnv = (): NodeJS.ProcessEnv => {
+  if (fakeBinEnv === null) {
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-cli-bin-"))
+    const bin = join(dir, "effect-lens")
+    writeFileSync(bin, "#!/bin/sh\nexit 0\n")
+    chmodSync(bin, 0o755)
+    fakeBinEnv = { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` }
+  }
+  return fakeBinEnv
+}
+
+const runCli = (
+  args: Array<string>,
+  env?: NodeJS.ProcessEnv
+): { stdout: string; stderr: string; status: number } => {
   const result = spawnSync(process.execPath, ["--experimental-strip-types", ENTRY, ...args], {
-    encoding: "utf8"
+    encoding: "utf8",
+    ...(env === undefined ? {} : { env })
   })
   return { stdout: result.stdout, stderr: result.stderr, status: result.status ?? -1 }
 }
@@ -91,7 +123,7 @@ describe("hooks install|uninstall (CLI, hk)", () => {
   it("installs an effect-lens step and emits JSON in --json mode", () => {
     const dir = hkProject()
     try {
-      const { stdout, status } = runCli(["hooks", "install", "--project", dir, "--json"])
+      const { stdout, status } = runCli(["hooks", "install", "--project", dir, "--json"], binEnv())
       expect(status).toBe(0)
       const json = JSON.parse(stdout) as {
         machineOutput: { status: number }
@@ -101,7 +133,10 @@ describe("hooks install|uninstall (CLI, hk)", () => {
       expect(json.mutation.outcome).toBe("applied")
       expect(json.mutation.changed).toBe(true)
       expect(json.mutation.manager).toBe("hk")
-      expect(readFileSync(join(dir, "hk.pkl"), "utf8")).toContain("effect-lens:start")
+      const content = readFileSync(join(dir, "hk.pkl"), "utf8")
+      expect(content).toContain("effect-lens:start")
+      // The generated step is the scoped unified changed-file gate.
+      expect(content).toContain("check --mode unified --changed")
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -110,7 +145,7 @@ describe("hooks install|uninstall (CLI, hk)", () => {
   it("emits human output in default mode", () => {
     const dir = hkProject()
     try {
-      const { stdout, status } = runCli(["hooks", "install", "--project", dir])
+      const { stdout, status } = runCli(["hooks", "install", "--project", dir], binEnv())
       expect(status).toBe(0)
       expect(stdout).toContain("effect-lens hooks install")
       expect(stdout).toContain("outcome: applied")
@@ -122,12 +157,57 @@ describe("hooks install|uninstall (CLI, hk)", () => {
   it("uninstall removes the step and emits JSON", () => {
     const dir = hkProject()
     try {
-      runCli(["hooks", "install", "--project", dir])
-      const { stdout, status } = runCli(["hooks", "uninstall", "--project", dir, "--json"])
+      runCli(["hooks", "install", "--project", dir], binEnv())
+      const { stdout, status } = runCli(
+        ["hooks", "uninstall", "--project", dir, "--json"],
+        binEnv()
+      )
       expect(status).toBe(0)
       const json = JSON.parse(stdout) as { mutation: { outcome: string; changed: boolean } }
       expect(json.mutation.outcome).toBe("applied")
       expect(json.mutation.changed).toBe(true)
+      expect(readFileSync(join(dir, "hk.pkl"), "utf8")).not.toContain("effect-lens:start")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("passes an explicitly selected workspace into the generated command", () => {
+    const dir = hkProject()
+    try {
+      const { stdout, status } = runCli(
+        ["hooks", "install", "--project", dir, "--workspace", "packages/foldkit", "--json"],
+        binEnv()
+      )
+      expect(status).toBe(0)
+      const json = JSON.parse(stdout) as { mutation: { outcome: string } }
+      expect(json.mutation.outcome).toBe("applied")
+      const content = readFileSync(join(dir, "hk.pkl"), "utf8")
+      expect(content).toContain("check --mode unified --changed")
+      expect(content).toContain("--workspace 'packages/foldkit'")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("refuses install when the effect-lens command is unavailable", () => {
+    const dir = hkProject()
+    try {
+      const { stdout, status } = runCli(["hooks", "install", "--project", dir, "--json"], {
+        ...binEnv(),
+        EFFECT_LENS_COMMAND: "/nonexistent/effect-lens"
+      })
+      expect(status).toBe(2)
+      const json = JSON.parse(stdout) as {
+        mutation: { outcome: string; changed: boolean }
+        machineOutput: { diagnostics: Array<{ id: string }> }
+      }
+      expect(json.mutation.outcome).toBe("refused")
+      expect(json.mutation.changed).toBe(false)
+      expect(
+        json.machineOutput.diagnostics.some((d) => d.id === "hooks-install-hk-command-unavailable")
+      ).toBe(true)
+      // No partial write.
       expect(readFileSync(join(dir, "hk.pkl"), "utf8")).not.toContain("effect-lens:start")
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -139,7 +219,7 @@ describe("setup --apply (CLI, hk)", () => {
   it("applies the hooks step and emits JSON with per-step outcomes", () => {
     const dir = hkProject()
     try {
-      const { stdout, status } = runCli(["setup", "--apply", "--project", dir, "--json"])
+      const { stdout, status } = runCli(["setup", "--apply", "--project", dir, "--json"], binEnv())
       expect(status).toBe(1)
       const json = JSON.parse(stdout) as {
         machineOutput: { status: number }
@@ -155,6 +235,8 @@ describe("setup --apply (CLI, hk)", () => {
       const byId = new Map(json.apply.steps.map((s) => [s.id, s.outcome]))
       expect(byId.get("hooks")).toBe("applied")
       expect(byId.get("effect-dependency")).toBe("deferred")
+      // The generated step is the scoped unified changed-file gate.
+      expect(readFileSync(join(dir, "hk.pkl"), "utf8")).toContain("check --mode unified --changed")
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -163,7 +245,7 @@ describe("setup --apply (CLI, hk)", () => {
   it("emits human output in default mode", () => {
     const dir = hkProject()
     try {
-      const { stdout, status } = runCli(["setup", "--apply", "--project", dir])
+      const { stdout, status } = runCli(["setup", "--apply", "--project", dir], binEnv())
       expect(status).toBe(1)
       expect(stdout).toContain("effect-lens setup --apply")
       expect(stdout).toContain("[applied] hooks")

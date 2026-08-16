@@ -127,6 +127,7 @@ export const applySetupPlan = (args: {
   projectDir: string
   cacheDir: string
   workspace?: string | undefined
+  command?: string | undefined
 }): SetupApplyResult => {
   const plan = buildSetupPlan(args)
   const hasUnsupported = plan.steps.some((s) => s.status === "unsupported")
@@ -154,7 +155,12 @@ export const applySetupPlan = (args: {
     })
   }
 
-  const mutation = applyHookMutation({ projectDir: args.projectDir, operation: "install" })
+  const mutation = applyHookMutation({
+    projectDir: args.projectDir,
+    operation: "install",
+    workspace: args.workspace,
+    command: args.command
+  })
   const hooksOutcome: SetupApplyStepOutcome = mutation.outcome === "applied"
     ? "applied"
     : mutation.outcome === "noop"

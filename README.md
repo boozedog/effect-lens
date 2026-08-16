@@ -62,9 +62,16 @@ In a pnpm monorepo the lockfile lives at the repository root while Effect may
 be declared in a workspace package. Pass `--workspace <pkg>` (relative to
 `--project`) to the resolution-based commands (`doctor`, `drift`,
 `setup --dry-run`, `packs plan`, `packs status`, `adoption audit`, and `freshness`) to resolve that package's Effect version from
-the root lockfile and select the exact reference pack. The target may be the
+the root lockfile and select the exact reference pack. `hooks install` and
+`setup --apply` pass `--workspace` into the generated hook command so the
+installed pre-commit check lints only the selected workspace's staged files.
+The target may be the
 full importer path (`packages/foldkit`) or the final path segment (`foldkit`);
-an ambiguous basename and an unmatched target are reported as blocking errors.
+an ambiguous basename and an unmatched target are reported as blocking errors
+for the resolution-based commands and `setup --apply`. `hooks install` embeds
+the workspace verbatim without resolution validation, so an unmatched target
+there yields an empty changed scope (a clean pass) at runtime rather than a
+blocking error.
 Single-package repositories are unaffected and need no extra flags. See
 `docs/cli.md` for the full precedence rules.
 

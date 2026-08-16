@@ -69,8 +69,9 @@ effect-lens doctor --project . --workspace packages/foldkit --cache ~/.cache/eff
 boundary). `--workspace` selects a package relative to that root and is used by
 the resolution-based commands (`doctor`, `drift`, `setup --dry-run`,
 `packs plan`, `packs status`, `adoption audit`, and `freshness`); `check
---changed` uses it to scope the staged changed files, and `hooks` is unaffected
-because it does not resolve the Effect dependency.
+--changed` uses it to scope the staged changed files, and `hooks install` /
+`setup --apply` pass it into the generated hook command so the installed
+pre-commit check lints only the selected workspace's staged files.
 
 Resolution precedence for the _expected_ Effect identity:
 
@@ -408,8 +409,22 @@ Explicitly add or remove the Lens-owned `effect-lens` step in the `hk`
 `pre-commit` hook. They are idempotent and refuse ambiguous or unsupported
 configs without writing. See [`docs/setup.md`](setup.md).
 
+The generated step runs a scoped unified changed-file gate
+(`effect-lens check --mode unified --changed`), so the installed pre-commit
+check lints only the staged changed files while preserving the repository's
+oxlint config. When `--workspace` is passed, the selected workspace is embedded
+in the generated command so the hook lints only that workspace's staged files.
+The binary and workspace values are shell-quoted and the whole command is
+Pkl-escaped, so a value containing spaces or shell metacharacters stays a
+single literal argument. Before writing `hk.pkl`, `install` verifies the
+`effect-lens` command is available on `PATH` and refuses with an actionable
+diagnostic when it is not. Re-running `install` when a Lens-owned block is
+already present is a no-op; to refresh the command (for example a different
+`--workspace`), run `uninstall` first.
+
 ```sh
 effect-lens hooks install --project . --json
+effect-lens hooks install --project . --workspace packages/foldkit --json
 effect-lens hooks uninstall --project . --json
 ```
 

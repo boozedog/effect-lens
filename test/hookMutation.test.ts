@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from "@effect/vitest"
 import * as Option from "effect/Option"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { applyHookMutation } from "../src/operations/hookMutation.ts"
@@ -22,6 +22,27 @@ const END_MARKER = "// === effect-lens:end ==="
 
 const AMENDS =
   `amends "package://github.com/jdx/hk/releases/download/v1.55.0/hk@1.55.0#/Config.pkl"`
+
+/**
+ * A fake `effect-lens` executable used to satisfy the command-availability
+ * precondition without depending on the real binary or a built `dist/`. The
+ * path is passed as the `command` seam to `applyHookMutation`; the generated
+ * hk step embeds it, so tests assert on the check flags rather than the exact
+ * command name.
+ *
+ * @since 0.0.0
+ */
+let fakeCommandPath: string | null = null
+const fakeCommand = (): string => {
+  if (fakeCommandPath === null) {
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-cmd-"))
+    const bin = join(dir, "effect-lens")
+    writeFileSync(bin, "#!/bin/sh\nexit 0\n")
+    chmodSync(bin, 0o755)
+    fakeCommandPath = bin
+  }
+  return fakeCommandPath
+}
 
 /**
  * Creates a temporary project directory that is removed when the test ends.
@@ -68,14 +89,18 @@ describe("hooks install (hk)", () => {
   it("inserts a Lens step into an inline steps mapping, preserving other lines", () => {
     const dir = inlineProject()
     try {
-      const result = applyHookMutation({ projectDir: dir, operation: "install" })
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand()
+      })
       expect(result.outcome).toBe("applied")
       expect(result.changed).toBe(true)
       expect(Option.getOrNull(result.manager)).toBe("hk")
       const content = read(dir)
       expect(content).toContain(START_MARKER)
       expect(content).toContain("[\"effect-lens\"]")
-      expect(content).toContain("check = \"effect-lens check\"")
+      expect(content).toContain("check --mode unified --changed")
       expect(content).toContain(END_MARKER)
       expect(content).toContain("[\"lint\"]")
       expect(content.indexOf("[\"lint\"]")).toBeLessThan(content.indexOf("[\"effect-lens\"]"))
@@ -87,13 +112,18 @@ describe("hooks install (hk)", () => {
   it("converts `steps = linters` to an inline mapping with a spread plus the Lens step", () => {
     const dir = assignProject()
     try {
-      const result = applyHookMutation({ projectDir: dir, operation: "install" })
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand()
+      })
       expect(result.outcome).toBe("applied")
       const content = read(dir)
       expect(content).not.toContain("steps = linters")
       expect(content).toContain("...linters")
       expect(content).toContain("[\"effect-lens\"]")
       expect(content).toContain(START_MARKER)
+      expect(content).toContain("check --mode unified --changed")
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -102,10 +132,16 @@ describe("hooks install (hk)", () => {
   it("is a no-op on repeat install with no duplicate step", () => {
     const dir = inlineProject()
     try {
-      expect(applyHookMutation({ projectDir: dir, operation: "install" }).outcome).toBe(
+      expect(
+        applyHookMutation({ projectDir: dir, operation: "install", command: fakeCommand() }).outcome
+      ).toBe(
         "applied"
       )
-      const second = applyHookMutation({ projectDir: dir, operation: "install" })
+      const second = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand()
+      })
       expect(second.outcome).toBe("noop")
       expect(second.changed).toBe(false)
       const count = read(dir).split("[\"effect-lens\"]").length - 1
@@ -118,7 +154,11 @@ describe("hooks install (hk)", () => {
   it("refuses when no hk.pkl exists", () => {
     const dir = tempProject()
     try {
-      const result = applyHookMutation({ projectDir: dir, operation: "install" })
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand()
+      })
       expect(result.outcome).toBe("refused")
       expect(result.diagnostics.some((d) => d.id === "hooks-install-hk-no-config")).toBe(true)
     } finally {
@@ -131,7 +171,11 @@ describe("hooks install (hk)", () => {
       `${AMENDS}\nhooks {\n  ["pre-commit"] {\n    steps {\n      ["effect-lens"] {\n        check = "effect-lens check"\n      }\n    }\n  }\n}\n`
     )
     try {
-      const result = applyHookMutation({ projectDir: dir, operation: "install" })
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand()
+      })
       expect(result.outcome).toBe("refused")
       expect(result.changed).toBe(false)
       expect(result.diagnostics.some((d) => d.id === "hooks-install-hk-not-owned")).toBe(true)
@@ -143,7 +187,11 @@ describe("hooks install (hk)", () => {
   it("refuses a pre-commit without a steps mapping (no partial write)", () => {
     const dir = project(`${AMENDS}\nhooks {\n  ["pre-commit"] {\n    fix = true\n  }\n}\n`)
     try {
-      const result = applyHookMutation({ projectDir: dir, operation: "install" })
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand()
+      })
       expect(result.outcome).toBe("refused")
       expect(result.diagnostics.some((d) => d.id === "hooks-install-hk-no-steps")).toBe(true)
       // No partial write: the config is unchanged.
@@ -156,11 +204,109 @@ describe("hooks install (hk)", () => {
   it("refuses an unsupported steps shape (non-simple value)", () => {
     const dir = project(`${AMENDS}\nhooks {\n  ["pre-commit"] {\n    steps = foo + bar\n  }\n}\n`)
     try {
-      const result = applyHookMutation({ projectDir: dir, operation: "install" })
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand()
+      })
       expect(result.outcome).toBe("refused")
       expect(
         result.diagnostics.some((d) => d.id === "hooks-install-hk-unsupported-shape")
       ).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("generates a scoped unified changed-file command with no workspace", () => {
+    const dir = inlineProject()
+    try {
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand()
+      })
+      expect(result.outcome).toBe("applied")
+      const content = read(dir)
+      // The step runs the unified changed-file gate, not an unscoped check.
+      expect(content).toContain("check --mode unified --changed")
+      expect(content).not.toContain("check = \"effect-lens check\"")
+      // No workspace is selected, so no --workspace flag is emitted.
+      expect(content).not.toContain("--workspace")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("passes an explicitly selected workspace into the generated command", () => {
+    const dir = inlineProject()
+    try {
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand(),
+        workspace: "packages/foldkit"
+      })
+      expect(result.outcome).toBe("applied")
+      const content = read(dir)
+      expect(content).toContain("check --mode unified --changed")
+      expect(content).toContain("--workspace 'packages/foldkit'")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("shell-quotes a workspace target with spaces", () => {
+    const dir = inlineProject()
+    try {
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand(),
+        workspace: "packages/my app"
+      })
+      expect(result.outcome).toBe("applied")
+      const content = read(dir)
+      expect(content).toContain("--workspace 'packages/my app'")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("escapes a workspace target for the Pkl string", () => {
+    const dir = inlineProject()
+    try {
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand(),
+        workspace: "packages/\"quoted\""
+      })
+      expect(result.outcome).toBe("applied")
+      const content = read(dir)
+      // The workspace is shell-quoted, then Pkl-escaped for the check string.
+      expect(content).toContain("--workspace 'packages/\\\"quoted\\\"'")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("refuses when the effect-lens command is unavailable (no partial write)", () => {
+    const dir = inlineProject()
+    try {
+      const before = read(dir)
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: "/nonexistent/effect-lens"
+      })
+      expect(result.outcome).toBe("refused")
+      expect(result.changed).toBe(false)
+      expect(
+        result.diagnostics.some((d) => d.id === "hooks-install-hk-command-unavailable")
+      ).toBe(true)
+      // No partial write: the config is unchanged.
+      expect(read(dir)).toBe(before)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -171,7 +317,7 @@ describe("hooks uninstall (hk)", () => {
   it("removes the Lens step and preserves non-Lens steps", () => {
     const dir = inlineProject()
     try {
-      applyHookMutation({ projectDir: dir, operation: "install" })
+      applyHookMutation({ projectDir: dir, operation: "install", command: fakeCommand() })
       const result = applyHookMutation({ projectDir: dir, operation: "uninstall" })
       expect(result.outcome).toBe("applied")
       const content = read(dir)
@@ -198,7 +344,7 @@ describe("hooks uninstall (hk)", () => {
   it("round-trips: install then uninstall returns the config to a valid state", () => {
     const dir = inlineProject()
     try {
-      applyHookMutation({ projectDir: dir, operation: "install" })
+      applyHookMutation({ projectDir: dir, operation: "install", command: fakeCommand() })
       applyHookMutation({ projectDir: dir, operation: "uninstall" })
       const content = read(dir)
       expect(content).not.toContain(START_MARKER)
@@ -245,7 +391,11 @@ describe("hooks uninstall (hk)", () => {
     )
     try {
       const before = read(dir)
-      const result = applyHookMutation({ projectDir: dir, operation: "install" })
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand()
+      })
       expect(result.outcome).toBe("refused")
       expect(result.diagnostics.some((d) => d.id === "hooks-install-hk-malformed")).toBe(true)
       expect(read(dir)).toBe(before)
@@ -270,7 +420,7 @@ describe("hooks uninstall (hk)", () => {
   it("is a no-op on repeat uninstall", () => {
     const dir = inlineProject()
     try {
-      applyHookMutation({ projectDir: dir, operation: "install" })
+      applyHookMutation({ projectDir: dir, operation: "install", command: fakeCommand() })
       applyHookMutation({ projectDir: dir, operation: "uninstall" })
       const third = applyHookMutation({ projectDir: dir, operation: "uninstall" })
       expect(third.outcome).toBe("noop")

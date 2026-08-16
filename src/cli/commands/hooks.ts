@@ -95,7 +95,9 @@ const runHookMutation = (
 ): CliResult => {
   const result = HookMutation.applyHookMutation({
     projectDir: context.projectDir,
-    operation
+    operation,
+    workspace: context.workspace,
+    command: context.command
   })
   const machineOutput = makeMachineOutput({
     status: aggregateStatus({ findings: [], diagnostics: result.diagnostics }),

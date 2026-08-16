@@ -43,4 +43,11 @@ export interface CliContext {
    * the root lockfile. Optional; when absent, the root importer is used.
    */
   readonly workspace?: string | undefined
+  /**
+   * The `effect-lens` command name used to verify availability before a hook
+   * install writes `hk.pkl`. Defaults to `effect-lens`; overridable via the
+   * `EFFECT_LENS_COMMAND` environment variable (used by tests and unusual
+   * installs).
+   */
+  readonly command?: string | undefined
 }

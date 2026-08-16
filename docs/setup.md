@@ -149,8 +149,9 @@ or `--apply`. `--apply` and `--dry-run` are mutually exclusive.
 
 - **precondition** — refuses before any mutation when the plan contains an
   `unsupported` step (e.g. an unsupported package manager or an ambiguous hook
-  manager) or when the hooks step needs action but no supported hook target
-  resolves. A refused apply writes nothing.
+  manager), when the hooks step needs action but no supported hook target
+  resolves, or when the `effect-lens` command is unavailable on `PATH`. A
+  refused apply writes nothing.
 - **applies** only the actionable, unambiguous **hooks** step (install the
   `effect-lens` check into the single supported manager).
 - **reports** every step as `applied`, `ok`, `deferred`, `refused`, or
@@ -181,7 +182,7 @@ hook's `steps` mapping, delimited by stable Pkl comment markers:
 ```pkl
 // === effect-lens:start ===
 ["effect-lens"] {
-  check = "effect-lens check"
+  check = "'effect-lens' check --mode unified --changed"
 }
 // === effect-lens:end ===
 ```
@@ -192,6 +193,54 @@ block and leaves every other line and step untouched.
 Re-running `hooks install` when the block is already present is a no-op (no
 duplicate step is added); re-running `hooks uninstall` when nothing is
 installed is a no-op.
+
+### Scoped changed-file command
+
+The generated step runs a **scoped unified changed-file gate** rather than an
+unscoped `effect-lens check`:
+
+- `--mode unified` preserves the repository's oxlint config (ignores,
+  overrides, and rule settings) while loading the Lens rules, so the hook
+  honours the same project policy as a full-tree scan.
+- `--changed` lints only the staged changed files, so a pre-commit hook checks
+  exactly what is about to be committed. Staged paths are read from Git
+  (`git diff --cached --name-only --diff-filter=ACMR`), so deleted and
+  unstaged-only files are excluded.
+
+When `hooks install` or `setup --apply` receives an explicit `--workspace`, the
+selected workspace is passed into the generated command so the hook lints only
+that workspace's staged files:
+
+```pkl
+check = "'effect-lens' check --mode unified --changed --workspace 'packages/foldkit'"
+```
+
+With no `--workspace`, the hook operates over all staged paths under the root
+config. The binary and workspace values are shell-quoted and the whole command
+is Pkl-escaped when embedded in the `check` string, so a workspace or command
+path containing spaces or shell metacharacters stays a single literal argument
+and cannot break or inject into the hook.
+
+`setup --apply` resolves the workspace target against the root lockfile and
+refuses an unmatched or ambiguous target as a blocking error. `hooks install`
+embeds the workspace verbatim without resolution validation, so an unmatched
+target produces an empty changed scope (a clean pass) at runtime rather than a
+blocking error.
+
+Re-running `hooks install` when a Lens-owned block is already present is a
+no-op, even if the generated command differs (for example the old unscoped
+`effect-lens check` or a different `--workspace`). To refresh the installed
+command, run `hooks uninstall` first and then `hooks install` again.
+
+### Command availability requirement
+
+Before `hooks install` or `setup --apply` writes `hk.pkl`, Lens verifies that
+the `effect-lens` command is available on `PATH` (by running
+`effect-lens --version`). If it is unavailable, the install refuses with an
+actionable diagnostic (e.g. `npm install -g effect-lens`) and writes nothing,
+so a generated hook can never reference a command that cannot run. The command
+name defaults to `effect-lens` and can be overridden with the
+`EFFECT_LENS_COMMAND` environment variable.
 
 ### Supported mutation targets
 
@@ -222,6 +271,8 @@ rather than guessing at another config file.
 
 - the hk config is present but unreadable (`ambiguous`);
 - `install` finds no `hk.pkl` (run `hk init` first);
+- `install` finds the `effect-lens` command unavailable on `PATH` (install it
+  first, e.g. `npm install -g effect-lens`);
 - `install`/`uninstall` finds an `effect-lens` reference that is not a
   Lens-owned step (a bare `["effect-lens"]` step or a reference in another
   hook), and cannot take ownership safely;
