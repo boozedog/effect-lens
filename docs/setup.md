@@ -221,11 +221,10 @@ is Pkl-escaped when embedded in the `check` string, so a workspace or command
 path containing spaces or shell metacharacters stays a single literal argument
 and cannot break or inject into the hook.
 
-`setup --apply` resolves the workspace target against the root lockfile and
-refuses an unmatched or ambiguous target as a blocking error. `hooks install`
-embeds the workspace verbatim without resolution validation, so an unmatched
-target produces an empty changed scope (a clean pass) at runtime rather than a
-blocking error.
+Both `setup --apply` and `hooks install` validate the workspace target against
+the root lockfile **before any write** and refuse an unmatched or ambiguous
+target as a blocking error (never a partial write). A valid basename target is
+canonicalized to the full importer path in the generated command.
 
 Re-running `hooks install` when a Lens-owned block is already present is a
 no-op, even if the generated command differs (for example the old unscoped

@@ -430,3 +430,136 @@ describe("hooks uninstall (hk)", () => {
     }
   })
 })
+
+/**
+ * A pnpm lockfile declaring `packages/foldkit` (unique basename `foldkit`)
+ * and two `.../kit` importers (`kit` is an ambiguous basename target).
+ *
+ * @since 0.0.0
+ */
+const workspaceLock = (): string =>
+  `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/foldkit:
+    dependencies:
+      effect:
+        specifier: 4.0.0-beta.83
+        version: 4.0.0-beta.83
+
+  packages/tools/kit:
+    dependencies:
+      effect:
+        specifier: 4.0.0-rc.109
+        version: 4.0.0-rc.109
+
+  apps/kit:
+    dependencies:
+      effect:
+        specifier: 4.0.0-rc.109
+        version: 4.0.0-rc.109
+
+packages:
+
+  effect@4.0.0-beta.83:
+    resolution: {integrity: sha512-beta83}
+    dependencies:
+      fast-check: 4.9.0
+
+  effect@4.0.0-rc.109:
+    resolution: {integrity: sha512-rc109}
+    dependencies:
+      fast-check: 4.9.0
+`
+
+describe("hooks install workspace validation", () => {
+  const pnpmProject = (): string => {
+    const dir = inlineProject()
+    writeFileSync(join(dir, "pnpm-lock.yaml"), workspaceLock())
+    return dir
+  }
+
+  it("refuses an unresolved workspace target before writing (no partial write)", () => {
+    const dir = pnpmProject()
+    try {
+      const before = read(dir)
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand(),
+        workspace: "does-not-exist"
+      })
+      expect(result.outcome).toBe("refused")
+      expect(result.changed).toBe(false)
+      expect(
+        result.diagnostics.some((d) => d.id === "hooks-install-hk-workspace-unresolved")
+      ).toBe(true)
+      expect(read(dir)).toBe(before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("refuses an ambiguous workspace target before writing (no partial write)", () => {
+    const dir = pnpmProject()
+    try {
+      const before = read(dir)
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand(),
+        workspace: "kit"
+      })
+      expect(result.outcome).toBe("refused")
+      expect(result.changed).toBe(false)
+      expect(
+        result.diagnostics.some((d) => d.id === "hooks-install-hk-workspace-ambiguous")
+      ).toBe(true)
+      expect(read(dir)).toBe(before)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("canonicalizes a valid basename workspace target in the generated command", () => {
+    const dir = pnpmProject()
+    try {
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand(),
+        workspace: "foldkit"
+      })
+      expect(result.outcome).toBe("applied")
+      // The basename target is canonicalized to the full importer path so the
+      // generated hook lints exactly the selected workspace.
+      expect(read(dir)).toContain("--workspace 'packages/foldkit'")
+      expect(read(dir)).not.toContain("--workspace 'foldkit'")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("preserves a full importer path workspace in the generated command", () => {
+    const dir = pnpmProject()
+    try {
+      const result = applyHookMutation({
+        projectDir: dir,
+        operation: "install",
+        command: fakeCommand(),
+        workspace: "packages/foldkit"
+      })
+      expect(result.outcome).toBe("applied")
+      expect(read(dir)).toContain("--workspace 'packages/foldkit'")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

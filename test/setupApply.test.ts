@@ -10,6 +10,7 @@
  * @since 0.0.0
  */
 import { describe, expect, it } from "@effect/vitest"
+import * as Option from "effect/Option"
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -190,6 +191,60 @@ describe("setup --apply", () => {
       expect(hooks?.outcome).toBe("refused")
       // No files were created at all.
       expect(existsSync(join(dir, "hk.pkl"))).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("refuses an invalid workspace target before any mutation (no partial write)", () => {
+    // A pnpm monorepo with an hk.pkl needing a step and an invalid workspace
+    // target: the plan flags the target as unresolved, so apply refuses.
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-apply-ws-"))
+    try {
+      writeFileSync(
+        join(dir, "pnpm-lock.yaml"),
+        `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/foldkit:
+    dependencies:
+      effect:
+        specifier: 4.0.0-beta.83
+        version: 4.0.0-beta.83
+
+packages:
+
+  effect@4.0.0-beta.83:
+    resolution: {integrity: sha512-beta83}
+    dependencies:
+      fast-check: 4.9.0
+`
+      )
+      writeFileSync(
+        join(dir, "hk.pkl"),
+        `hooks {\n  ["pre-commit"] {\n    steps {\n      ["lint"] {\n        check = "pnpm lint"\n      }\n    }\n  }\n}\n`
+      )
+      const before = readFileSync(join(dir, "hk.pkl"), "utf8")
+      const result = applySetupPlan({
+        projectDir: dir,
+        cacheDir: join(dir, "cache"),
+        command: fakeCommand(),
+        workspace: "does-not-exist"
+      })
+      expect(result.precondition).toBe(false)
+      expect(Option.isNone(result.hookMutation)).toBe(true)
+      // The invalid target is surfaced as a blocking diagnostic.
+      expect(result.diagnostics.some((d) => d.severity === "error")).toBe(true)
+      // No partial write: the hk.pkl is unchanged.
+      expect(readFileSync(join(dir, "hk.pkl"), "utf8")).toBe(before)
+      expect(readFileSync(join(dir, "hk.pkl"), "utf8")).not.toContain(START_MARKER)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

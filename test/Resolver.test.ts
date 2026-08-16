@@ -337,3 +337,55 @@ describe("workspace-aware monorepo resolution", () => {
     expect(identity?.source).toBe("lockfile")
   })
 })
+
+describe("resolveWorkspaceTarget", () => {
+  it("resolves a full importer path to the canonical repo-relative dir", () => {
+    const result = Resolver.resolveWorkspaceTarget(fixture(MONOREPO), "packages/foldkit")
+    expect(result.kind).toBe("ok")
+    if (result.kind === "ok") expect(result.dir).toBe("packages/foldkit")
+  })
+
+  it("canonicalizes a valid basename target to the full importer path", () => {
+    const result = Resolver.resolveWorkspaceTarget(fixture(MONOREPO), "foldkit")
+    expect(result.kind).toBe("ok")
+    if (result.kind === "ok") expect(result.dir).toBe("packages/foldkit")
+  })
+
+  it("does not resolve a multi-segment target that has no exact importer", () => {
+    // `tools/kit` has no exact importer and is multi-segment, so it must not
+    // fall back to basename matching and collide with `apps/kit`.
+    const result = Resolver.resolveWorkspaceTarget(fixture(MONOREPO), "tools/kit")
+    expect(result.kind).toBe("unresolved")
+  })
+
+  it("resolves a nested full importer path", () => {
+    const result = Resolver.resolveWorkspaceTarget(fixture(MONOREPO), "packages/tools/kit")
+    expect(result.kind).toBe("ok")
+    if (result.kind === "ok") expect(result.dir).toBe("packages/tools/kit")
+  })
+
+  it("distinguishes an unresolved target", () => {
+    const result = Resolver.resolveWorkspaceTarget(fixture(MONOREPO), "does-not-exist")
+    expect(result.kind).toBe("unresolved")
+    if (result.kind === "unresolved") expect(result.detail).toContain("does-not-exist")
+  })
+
+  it("reports a non-importer package.json (ghost) as unresolved", () => {
+    const result = Resolver.resolveWorkspaceTarget(fixture(MONOREPO), "ghost")
+    expect(result.kind).toBe("unresolved")
+  })
+
+  it("distinguishes an ambiguous target and lists the matching importers", () => {
+    const result = Resolver.resolveWorkspaceTarget(fixture(MONOREPO), "kit")
+    expect(result.kind).toBe("ambiguous")
+    if (result.kind === "ambiguous") {
+      expect(result.detail).toContain("packages/tools/kit")
+      expect(result.detail).toContain("apps/kit")
+    }
+  })
+
+  it("rejects the root as a workspace target", () => {
+    const result = Resolver.resolveWorkspaceTarget(fixture(MONOREPO), ".")
+    expect(result.kind).toBe("unresolved")
+  })
+})

@@ -13,7 +13,9 @@
  * emitted instead of crashing.
  *
  * The lint scope is one of:
- * - `project` (default) — the whole repository root.
+ * - `project` (default) — the whole repository root, or only the selected
+ *   workspace's tree when `--workspace` is supplied (the root remains the
+ *   config/lockfile boundary).
  * - `path` — an explicit `--path` file or directory relative to the project.
  * - `changed` (`--changed`) — the staged changed-file scope, optionally
  *   filtered to a selected `--workspace`. Changed files are read from Git
@@ -24,6 +26,13 @@
  *   A scope with no matching staged files is a clean no-op with an explicit
  *   report.
  *
+ * A full-check `--workspace` target that matches no single lockfile importer
+ * (invalid or ambiguous) blocks the run with an `error` diagnostic before
+ * oxlint is invoked, rather than silently scanning the repository root. This
+ * full-check rejection does not apply to `--changed`, which keeps its existing
+ * empty-scope no-op behavior. When both `--workspace` and `--path` are
+ * supplied, `--path` wins for the lint scope.
+ *
  * @since 0.0.0
  */
 import * as Option from "effect/Option"
@@ -33,6 +42,7 @@ import type { Diagnostic } from "../../Finding.ts"
 import * as Review from "../../operations/review.ts"
 import { makeDiagnostic } from "../../operations/shared.ts"
 import { type CheckMode, DEFAULT_CHECK_MODE } from "../../provider/Provider.ts"
+import { resolveWorkspaceTarget } from "../../Resolver.ts"
 import { resolveChangedFiles } from "../changed.ts"
 import { encode } from "../encode.ts"
 import { runOxlint } from "../oxlint.ts"
@@ -41,15 +51,25 @@ import type { CliResult } from "../types.ts"
 /**
  * The resolved lint scope for a `check` run.
  *
- * - `project` — the whole repository root (the default).
+ * - `project` — the whole repository root (the default), or only the selected
+ *   workspace's tree when `--workspace` is supplied. The repository root
+ *   remains the config/lockfile boundary.
  * - `path` — an explicit `--path` file or directory relative to the project.
+ *   When both `--workspace` and `--path` are supplied, `--path` wins for the
+ *   lint scope.
  * - `changed` — the staged changed-file scope (`--changed`), optionally
  *   filtered to a selected workspace.
  *
  * @since 0.0.0
  */
 export type CheckScope =
-  | { readonly kind: "project"; readonly workspace: string | null }
+  | {
+    readonly kind: "project"
+    readonly workspace: string | null
+    readonly workspaceDir: string | null
+    readonly error: string | null
+    readonly errorKind: "ambiguous" | "unresolved" | null
+  }
   | { readonly kind: "path"; readonly path: string; readonly workspace: string | null }
   | {
     readonly kind: "changed"
@@ -75,9 +95,13 @@ export const check = (args: {
   const scope = buildScope(args)
   const diagnostics: Array<Diagnostic> = []
   let oxlint: ReturnType<typeof runOxlint>
-  if (scope.kind === "changed" && scope.files.length === 0) {
-    // No staged files match the selected scope (or the scope could not be
-    // read): a clean no-op with an explicit report, so oxlint is not spawned.
+  if (
+    (scope.kind === "changed" && scope.files.length === 0) ||
+    (scope.kind === "project" && scope.error !== null)
+  ) {
+    // A changed scope with no matching files is a clean no-op, and a project
+    // scope whose workspace target failed to resolve is a blocking error. In
+    // both cases oxlint is not spawned.
     oxlint = {
       diagnostics: [],
       files: 0,
@@ -92,6 +116,19 @@ export const check = (args: {
       targets: targetsOf(args.projectDir, scope),
       mode
     })
+  }
+  if (scope.kind === "project" && scope.error !== null) {
+    // An invalid or ambiguous workspace target is a blocking diagnostic that
+    // prevents any lint run: the root is never silently scanned instead.
+    diagnostics.push(
+      makeDiagnostic({
+        id: scope.errorKind === "ambiguous"
+          ? "check-workspace-ambiguous"
+          : "check-workspace-unresolved",
+        severity: "error",
+        message: scope.error
+      })
+    )
   }
   if (scope.kind === "changed" && scope.error !== null) {
     diagnostics.push(
@@ -178,7 +215,31 @@ const buildScope = (args: {
   if (args.path !== undefined) {
     return { kind: "path", path: args.path, workspace }
   }
-  return { kind: "project", workspace }
+  // Full-check `--workspace`: resolve the target to a concrete repo-relative
+  // directory so the run lints only the selected workspace while keeping the
+  // repository root as the config/lockfile boundary. An invalid or ambiguous
+  // target is a blocking diagnostic (no lint run) rather than a silent root
+  // scan or a clean result.
+  if (workspace !== null) {
+    const target = resolveWorkspaceTarget(args.projectDir, workspace)
+    if (target.kind === "ok") {
+      return {
+        kind: "project",
+        workspace,
+        workspaceDir: target.dir,
+        error: null,
+        errorKind: null
+      }
+    }
+    return {
+      kind: "project",
+      workspace,
+      workspaceDir: null,
+      error: target.detail,
+      errorKind: target.kind
+    }
+  }
+  return { kind: "project", workspace: null, workspaceDir: null, error: null, errorKind: null }
 }
 
 /**
@@ -194,7 +255,9 @@ const targetsOf = (projectDir: string, scope: CheckScope): Array<string> => {
     case "path":
       return [resolve(projectDir, scope.path)]
     case "project":
-      return [projectDir]
+      return scope.workspaceDir !== null
+        ? [resolve(projectDir, scope.workspaceDir)]
+        : [projectDir]
   }
 }
 
@@ -215,7 +278,13 @@ const scopeJson = (scope: CheckScope): unknown => {
     case "path":
       return { kind: "path", path: scope.path, workspace: scope.workspace }
     case "project":
-      return { kind: "project", workspace: scope.workspace }
+      return {
+        kind: "project",
+        workspace: scope.workspace,
+        workspaceDir: scope.workspaceDir,
+        error: scope.error,
+        errorKind: scope.errorKind
+      }
   }
 }
 
@@ -245,10 +314,19 @@ const buildHuman = (args: {
     if (scope.workspace !== null) lines.push(`workspace: ${scope.workspace}`)
   } else if (scope.kind === "path") {
     lines.push(`path: ${scope.path}`)
+  } else if (scope.kind === "project" && scope.workspace !== null) {
+    if (scope.error !== null) {
+      lines.push(`workspace: ${scope.workspace} (${scope.errorKind ?? "error"}: ${scope.error})`)
+    } else {
+      lines.push(`workspace: ${scope.workspace} (scope: ${scope.workspaceDir})`)
+    }
   }
-  // A changed scope with no matching files never spawns oxlint, so there is
-  // no lint run to report.
-  if (!(changed && scope.files.length === 0)) {
+  // A changed scope with no matching files and a project scope whose workspace
+  // target failed to resolve never spawn oxlint, so there is no lint run to
+  // report.
+  const oxlintSkipped = (changed && scope.files.length === 0) ||
+    (scope.kind === "project" && scope.error !== null)
+  if (!oxlintSkipped) {
     if (oxlint.error !== null) {
       lines.push(`oxlint: ${oxlint.error}`)
     } else {

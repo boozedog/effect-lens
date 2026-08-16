@@ -68,10 +68,12 @@ effect-lens doctor --project . --workspace packages/foldkit --cache ~/.cache/eff
 `--project` is always the repository root (the lockfile and configuration
 boundary). `--workspace` selects a package relative to that root and is used by
 the resolution-based commands (`doctor`, `drift`, `setup --dry-run`,
-`packs plan`, `packs status`, `adoption audit`, and `freshness`); `check
---changed` uses it to scope the staged changed files, and `hooks install` /
-`setup --apply` pass it into the generated hook command so the installed
-pre-commit check lints only the selected workspace's staged files.
+`packs plan`, `packs status`, `adoption audit`, and `freshness`); `check` uses
+it to scope the lint target — for `check --changed` the staged changed files
+and for a full `check` the workspace's tree — and `hooks install` /
+`setup --apply` validate it and pass the canonicalized importer path into the
+generated hook command so the installed pre-commit check lints only the
+selected workspace's staged files.
 
 Resolution precedence for the _expected_ Effect identity:
 
@@ -88,7 +90,11 @@ A workspace target may be given as the full importer path
 (`foldkit`). When the basename is ambiguous (two packages share it), resolution
 fails with a blocking `workspace-ambiguous` error and lists the matching
 importers so you can disambiguate with the full path. A target that matches no
-importer is a blocking `workspace-unresolved` error. A monorepo with no
+importer is a blocking `workspace-unresolved` error. A full `check`
+(`check --workspace ...` without `--changed`) and `hooks install` /
+`setup --apply` reject invalid or ambiguous targets before any lint run or
+hook write (no partial mutation); a valid basename target is canonicalized to
+the full importer path. A monorepo with no
 `--workspace` resolves against the root importer exactly as a single-package
 repository does, preserving existing behaviour.
 
@@ -188,6 +194,35 @@ built-in config as `lens-only`. When the project config cannot be parsed, a
 `check-config-unparseable` warning diagnostic is emitted and the built-in
 config is used rather than crashing. An invalid `--mode` value (anything other
 than `lens-only` or `unified`) is rejected with exit `2`.
+
+#### Workspace scope (full check)
+
+A full `check` run (without `--changed` or `--path`) lints the whole
+repository root by default. Supplying `--workspace <target>` scopes a full run
+to only the selected workspace's tree, so root and other-workspace files never
+affect the selected workspace's result. The repository root (`--project`)
+remains the config/lockfile boundary: the oxlint config is still loaded from
+the root while only the workspace tree is linted.
+
+```sh
+effect-lens check --project . --workspace packages/foldkit --mode unified
+```
+
+- **Target resolution** — a `--workspace` target resolves exactly as it does
+  for `adoption audit` and `check --changed`: a full importer path
+  (`packages/foldkit`) or a unique basename (`foldkit`, expanded to
+  `packages/foldkit`) against the root pnpm-lockfile importers.
+- **Invalid / ambiguous targets are rejected (full check only)** — a target
+  that matches no importer or more than one importer is a blocking `error`
+  diagnostic (`check-workspace-unresolved` / `check-workspace-ambiguous`) and
+  oxlint is **not** invoked: the root is never silently scanned and a clean
+  result is never fabricated. The human and JSON output report the failing
+  target and (for ambiguous targets) the matching importers so you can
+  disambiguate with the full path. This full-check rejection does not apply to
+  `--changed`, which keeps its existing empty-scope no-op behavior.
+- **Scope precedence** — when both `--workspace` and `--path` are supplied,
+  `--path` wins for the lint scope: the explicit path is the lint target.
+  `--changed` and `--path` remain mutually exclusive.
 
 #### Changed-file scope
 
@@ -412,8 +447,10 @@ configs without writing. See [`docs/setup.md`](setup.md).
 The generated step runs a scoped unified changed-file gate
 (`effect-lens check --mode unified --changed`), so the installed pre-commit
 check lints only the staged changed files while preserving the repository's
-oxlint config. When `--workspace` is passed, the selected workspace is embedded
-in the generated command so the hook lints only that workspace's staged files.
+oxlint config. When `--workspace` is passed, the selected workspace is validated
+against the root lockfile importers before any write (an invalid or ambiguous
+target refuses atomically) and the canonicalized importer path is embedded in
+the generated command so the hook lints only that workspace's staged files.
 The binary and workspace values are shell-quoted and the whole command is
 Pkl-escaped, so a value containing spaces or shell metacharacters stays a
 single literal argument. Before writing `hk.pkl`, `install` verifies the

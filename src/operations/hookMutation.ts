@@ -29,6 +29,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { HookMutationResult, HookOperation, makeHookMutationResult } from "../HookMutation.ts"
+import { resolveWorkspaceTarget } from "../Resolver.ts"
 import { hooksStatus } from "./hooks.ts"
 import { makeDiagnostic } from "./shared.ts"
 
@@ -119,6 +120,39 @@ const buildLensCommand = (command: string, workspace?: string | undefined): stri
     return `${base} --workspace ${shellQuote(workspace)}`
   }
   return base
+}
+
+/**
+ * Resolves the workspace target for a hook install, refusing invalid or
+ * ambiguous targets atomically (before any file write).
+ *
+ * When no workspace is supplied, returns `{ value: undefined }` (no workspace
+ * flag). For a parseable pnpm monorepo the target is validated against the
+ * lockfile importers: a target matching no single importer is refused, and a
+ * valid basename target is canonicalized to the full importer path so the
+ * generated hook step lints exactly the selected workspace. For a non-pnpm
+ * project no importer validation is possible, so the normalized target is
+ * passed through unchanged (consistent with the read-only resolvers).
+ *
+ * @since 0.0.0
+ */
+const resolveHookWorkspace = (
+  projectDir: string,
+  workspace: string | undefined
+): { value: string | undefined } | { refused: string; id: string } => {
+  if (workspace === undefined || workspace === "") return { value: undefined }
+  const target = resolveWorkspaceTarget(projectDir, workspace)
+  if (target.kind === "ok") return { value: target.dir }
+  if (target.kind === "ambiguous") {
+    return {
+      refused: `cannot install hooks: ${target.detail}`,
+      id: "hooks-install-hk-workspace-ambiguous"
+    }
+  }
+  return {
+    refused: `cannot install hooks: ${target.detail}`,
+    id: "hooks-install-hk-workspace-unresolved"
+  }
 }
 
 /**
@@ -582,6 +616,13 @@ export const applyHookMutation = (args: {
         "hooks-install-hk-not-owned"
       )
     }
+    // Validate the workspace target before any mutation. An invalid or
+    // ambiguous target refuses atomically (nothing is written) and the valid
+    // target is canonicalized for the generated command.
+    const workspaceArg = resolveHookWorkspace(projectDir, args.workspace)
+    if ("refused" in workspaceArg) {
+      return refused(operation, workspaceArg.refused, workspaceArg.id)
+    }
     if (!commandAvailable(command)) {
       return refused(
         operation,
@@ -590,7 +631,7 @@ export const applyHookMutation = (args: {
         "hooks-install-hk-command-unavailable"
       )
     }
-    return installHk(projectDir, relName, buildLensCommand(command, args.workspace))
+    return installHk(projectDir, relName, buildLensCommand(command, workspaceArg.value))
   }
 
   // uninstall

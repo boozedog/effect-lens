@@ -483,3 +483,228 @@ describe("check", () => {
     }
   })
 })
+
+/**
+ * A pnpm lockfile declaring the root importer plus `packages/foldkit`
+ * (unique basename `foldkit`) and two `.../kit` importers (`kit` is an
+ * ambiguous basename target).
+ *
+ * @since 0.0.0
+ */
+const workspaceLock = (): string =>
+  `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/foldkit:
+    dependencies:
+      effect:
+        specifier: 4.0.0-beta.83
+        version: 4.0.0-beta.83
+
+  packages/tools/kit:
+    dependencies:
+      effect:
+        specifier: 4.0.0-rc.109
+        version: 4.0.0-rc.109
+
+  apps/kit:
+    dependencies:
+      effect:
+        specifier: 4.0.0-rc.109
+        version: 4.0.0-rc.109
+
+packages:
+
+  effect@4.0.0-beta.83:
+    resolution: {integrity: sha512-beta83}
+    dependencies:
+      fast-check: 4.9.0
+
+  effect@4.0.0-rc.109:
+    resolution: {integrity: sha512-rc109}
+    dependencies:
+      fast-check: 4.9.0
+`
+
+describe("check full-check workspace scope", () => {
+  /**
+   * Creates a temporary pnpm monorepo with a root file outside any workspace
+   * and an async function inside `packages/foldkit`. Both would trigger
+   * `lens/no-async-function`, so a workspace-scoped run lints only the
+   * workspace copy.
+   *
+   * @since 0.0.0
+   */
+  const workspaceProject = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), "effect-lens-checkws-"))
+    writeFileSync(join(dir, "pnpm-lock.yaml"), workspaceLock())
+    mkdirSync(join(dir, "src"))
+    writeFileSync(
+      join(dir, "src", "root.ts"),
+      "async function rootFn() {\n  return 1\n}\nvoid rootFn\n"
+    )
+    mkdirSync(join(dir, "packages", "foldkit", "src"), { recursive: true })
+    writeFileSync(
+      join(dir, "packages", "foldkit", "src", "lib.ts"),
+      "async function libFn() {\n  return 2\n}\nvoid libFn\n"
+    )
+    return dir
+  }
+
+  it("full unified check with --workspace lints only the selected workspace, excluding root files", () => {
+    const dir = workspaceProject()
+    try {
+      const result = check({
+        projectDir: dir,
+        cacheDir,
+        mode: "unified",
+        workspace: "packages/foldkit"
+      })
+      // Only the foldkit workspace is linted: its async function is a finding.
+      expect(
+        result.machineOutput.findings.some((f) =>
+          f.location.file.includes("packages/foldkit/src/lib.ts")
+        )
+      ).toBe(true)
+      // The root file is outside the workspace and must not be linted.
+      expect(
+        result.machineOutput.findings.some((f) => f.location.file.includes("src/root.ts"))
+      ).toBe(false)
+      const json = result.json as {
+        scope: { kind: string; workspace: string; workspaceDir: string | null }
+        oxlint: { config: string }
+      }
+      expect(json.scope.kind).toBe("project")
+      expect(json.scope.workspace).toBe("packages/foldkit")
+      expect(json.scope.workspaceDir).toBe("packages/foldkit")
+      // No project oxlint config in the temp fixture, so unified mode falls
+      // back to the built-in config; the important point is oxlint DID run on
+      // the workspace scope (not the "none" used for a blocked run).
+      expect(json.oxlint.config).not.toBe("none")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("resolves a valid basename workspace target for full check", () => {
+    const dir = workspaceProject()
+    try {
+      const result = check({
+        projectDir: dir,
+        cacheDir,
+        mode: "unified",
+        workspace: "foldkit"
+      })
+      expect(
+        result.machineOutput.findings.some((f) =>
+          f.location.file.includes("packages/foldkit/src/lib.ts")
+        )
+      ).toBe(true)
+      const json = result.json as {
+        scope: { kind: string; workspace: string; workspaceDir: string | null }
+      }
+      expect(json.scope.kind).toBe("project")
+      expect(json.scope.workspace).toBe("foldkit")
+      expect(json.scope.workspaceDir).toBe("packages/foldkit")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects an unresolved workspace target with a blocking diagnostic and no oxlint run", () => {
+    const dir = workspaceProject()
+    try {
+      const result = check({
+        projectDir: dir,
+        cacheDir,
+        mode: "unified",
+        workspace: "does-not-exist"
+      })
+      expect(
+        result.machineOutput.diagnostics.some(
+          (d) => d.id === "check-workspace-unresolved" && d.severity === "error"
+        )
+      ).toBe(true)
+      // oxlint is never spawned: config source is none and zero files.
+      const json = result.json as {
+        scope: { error: string | null; errorKind: string | null }
+        oxlint: { files: number; config: string }
+      }
+      expect(json.scope.errorKind).toBe("unresolved")
+      expect(json.scope.error).toContain("does-not-exist")
+      expect(json.oxlint.files).toBe(0)
+      expect(json.oxlint.config).toBe("none")
+      expect(result.machineOutput.findings).toHaveLength(0)
+      // The blocking diagnostic drives a blocking exit status.
+      expect(result.machineOutput.status).toBe(2)
+      expect(result.human.join("\n")).toContain("workspace: does-not-exist")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("rejects an ambiguous workspace target with a blocking diagnostic and no oxlint run", () => {
+    const dir = workspaceProject()
+    try {
+      const result = check({
+        projectDir: dir,
+        cacheDir,
+        mode: "unified",
+        workspace: "kit"
+      })
+      expect(
+        result.machineOutput.diagnostics.some(
+          (d) => d.id === "check-workspace-ambiguous" && d.severity === "error"
+        )
+      ).toBe(true)
+      const json = result.json as {
+        scope: { error: string | null; errorKind: string | null }
+        oxlint: { files: number; config: string }
+      }
+      expect(json.scope.errorKind).toBe("ambiguous")
+      expect(json.scope.error).toContain("packages/tools/kit")
+      expect(json.scope.error).toContain("apps/kit")
+      expect(json.oxlint.files).toBe(0)
+      expect(json.oxlint.config).toBe("none")
+      expect(result.machineOutput.findings).toHaveLength(0)
+      // The blocking diagnostic drives a blocking exit status.
+      expect(result.machineOutput.status).toBe(2)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("an explicit --path wins over --workspace for the lint scope", () => {
+    const dir = workspaceProject()
+    try {
+      const result = check({
+        projectDir: dir,
+        cacheDir,
+        mode: "unified",
+        workspace: "packages/foldkit",
+        path: "src"
+      })
+      // The explicit path targets the root `src/` (root.ts), so the root file
+      // is linted and the workspace file is not.
+      expect(
+        result.machineOutput.findings.some((f) => f.location.file.includes("src/root.ts"))
+      ).toBe(true)
+      expect(
+        result.machineOutput.findings.some((f) => f.location.file.includes("foldkit"))
+      ).toBe(false)
+      const json = result.json as { scope: { kind: string; path: string; workspace: string } }
+      expect(json.scope.kind).toBe("path")
+      expect(json.scope.path).toBe("src")
+      expect(json.scope.workspace).toBe("packages/foldkit")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

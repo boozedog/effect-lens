@@ -549,6 +549,14 @@ importer is reported as `workspace-ambiguous` or `workspace-unresolved` and
 never falls back to a guessed manifest. See `docs/cli.md` for the target
 selection rules.
 
+`resolveWorkspaceTarget(projectDir, workspace)` exposes the same matching as a
+three-way result that callers use to reject a bad target before doing work:
+`{ kind: "ok", dir }` (the canonical repo-relative importer path, with a
+basename target expanded to the full path), `{ kind: "ambiguous", detail }`
+(more than one importer matches), or `{ kind: "unresolved", detail }` (no
+importer matches). `check` and `hooks install` / `setup --apply` use it to
+reject invalid or ambiguous targets before any lint run or hook write.
+
 `yarn.lock` and `bun.lock`/`bun.lockb` are detected but reported as
 `unsupported-lockfile`; Lens does not guess at their format. The installed
 package (`node_modules/effect/package.json`) is never the source of the
@@ -1644,6 +1652,13 @@ partial write).
   "diagnostics": []
 }
 ```
+
+When `hooks install` receives a `--workspace` target, the target is validated
+against the root lockfile importers **before any file write**. A target that
+matches no importer or more than one importer is `refused` with a blocking
+`hooks-install-hk-workspace-unresolved` / `hooks-install-hk-workspace-ambiguous`
+`error` diagnostic and nothing is written (never a partial write). A valid
+target is canonicalized to the full importer path for the generated command.
 
 ## `SetupApply` — src/SetupApply.ts
 

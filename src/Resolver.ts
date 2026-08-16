@@ -295,6 +295,66 @@ export const matchPnpmImporter = (
 }
 
 /**
+ * The outcome of resolving a workspace target to a concrete repo-relative
+ * directory.
+ *
+ * - `ok` — the target matches a single importer (or no importer validation
+ *   applies for a non-pnpm project); `dir` is the canonical repo-relative
+ *   directory (a basename target is expanded to the full importer path).
+ * - `ambiguous` — the target matches more than one importer.
+ * - `unresolved` — the target matches no supported importer.
+ *
+ * @since 0.0.0
+ */
+export type WorkspaceTargetResolve =
+  | { readonly kind: "ok"; readonly dir: string }
+  | { readonly kind: "ambiguous"; readonly detail: string }
+  | { readonly kind: "unresolved"; readonly detail: string }
+
+/**
+ * Resolves a workspace target to a concrete repo-relative directory,
+ * distinguishing an ambiguous target from an unresolved one.
+ *
+ * For a parseable pnpm monorepo the target is matched against the lockfile
+ * importers (exact path or basename), so `foldkit` resolves to
+ * `packages/foldkit`. An ambiguous match (more than one importer) and an
+ * unresolved match (no importer) are reported distinctly so callers can reject
+ * the target before doing any work. For a non-pnpm or unparseable lockfile no
+ * importer validation is possible, so the normalized target is returned as-is
+ * (`ok`), consistent with `resolveWorkspaceDir`.
+ *
+ * @since 0.0.0
+ */
+export const resolveWorkspaceTarget = (
+  projectDir: string,
+  workspace: string
+): WorkspaceTargetResolve => {
+  const lockfile = detectLockfile(projectDir)
+  if (lockfile === "pnpm-lock") {
+    const content = readFileSync(join(projectDir, "pnpm-lock.yaml"), "utf8")
+    if (isParseablePnpmLock(content)) {
+      const match = matchPnpmImporter(content, workspace)
+      if (match === null) {
+        return {
+          kind: "unresolved",
+          detail: `workspace target "${workspace}" does not match any importer in pnpm-lock.yaml`
+        }
+      }
+      if ("ambiguous" in match) {
+        return {
+          kind: "ambiguous",
+          detail: `workspace target "${workspace}" is ambiguous; matches ${
+            match.ambiguous.join(", ")
+          }`
+        }
+      }
+      return { kind: "ok", dir: normalizeWorkspace(match.key) }
+    }
+  }
+  return { kind: "ok", dir: normalizeWorkspace(workspace) }
+}
+
+/**
  * Resolves a workspace target to a concrete lockfile-relative directory path.
  *
  * For a pnpm monorepo the target is matched against the lockfile importers
@@ -309,17 +369,8 @@ export const resolveWorkspaceDir = (
   projectDir: string,
   workspace: string
 ): string | null => {
-  const lockfile = detectLockfile(projectDir)
-  if (lockfile === "pnpm-lock") {
-    const content = readFileSync(join(projectDir, "pnpm-lock.yaml"), "utf8")
-    if (isParseablePnpmLock(content)) {
-      const match = matchPnpmImporter(content, workspace)
-      if (match === null) return null
-      if ("ambiguous" in match) return null
-      return match.key
-    }
-  }
-  return normalizeWorkspace(workspace)
+  const target = resolveWorkspaceTarget(projectDir, workspace)
+  return target.kind === "ok" ? target.dir : null
 }
 
 /**
